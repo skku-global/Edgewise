@@ -45,3 +45,6 @@ coverage/
 # generated native folders
 /ios
 /android
+
+# Rendered email previews from scripts/set-email-templates.mjs --preview
+.preview-emails/
