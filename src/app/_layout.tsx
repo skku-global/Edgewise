@@ -16,6 +16,13 @@
  * loop to guard against. Signing out needs no navigation call either — the guard
  * flips and the navigator moves the user back to /login on its own.
  *
+ * That last property is what the recovery group leans on. A password-recovery
+ * link produces a *full* session, so without a third state the user would be
+ * dropped into the dashboard with their old password still set, having asked to
+ * change it. `isRecovering` closes the app group and opens a group containing
+ * exactly one screen — and because it is the only screen available, the
+ * navigator lands there by itself. No redirect, nothing to race.
+ *
  * `RootNavigator` is a separate component because it has to consume the context
  * that `SessionProvider` provides; a hook cannot read a provider its own
  * component renders.
@@ -77,7 +84,7 @@ export default function RootLayout() {
 }
 
 function RootNavigator() {
-  const { session, isLoading } = useSession();
+  const { session, isLoading, isRecovering } = useSession();
   const theme = useTheme();
 
   return (
@@ -92,16 +99,29 @@ function RootNavigator() {
           contentStyle: { backgroundColor: theme.color.bg },
         }}
       >
-        {/* Both guards read `!isLoading` so neither group mounts before the
-            stored session has been read. Without it the login screen would
-            mount on every cold start and then be swapped out, which is the
-            flash this whole arrangement exists to remove. */}
-        <Stack.Protected guard={!isLoading && !!session}>
+        {/* Every guard reads `!isLoading` so no group mounts before the stored
+            session has been read. Without it the login screen would mount on
+            every cold start and then be swapped out, which is the flash this
+            whole arrangement exists to remove.
+
+            The three guards are mutually exclusive, so exactly one group is ever
+            in the stack. */}
+        <Stack.Protected guard={!isLoading && !!session && !isRecovering}>
           <Stack.Screen name="(app)" />
         </Stack.Protected>
 
-        <Stack.Protected guard={!isLoading && !session}>
+        {/* Deliberately not `isRecovering && !!session`. On web the fragment
+            snapshot sets `isRecovering` synchronously while supabase-js is still
+            establishing the session from that same fragment, so requiring both
+            would flash the sign-in screen in the gap. The reset screen handles a
+            link that turned out to be dead itself. */}
+        <Stack.Protected guard={!isLoading && isRecovering}>
+          <Stack.Screen name="reset-password" />
+        </Stack.Protected>
+
+        <Stack.Protected guard={!isLoading && !session && !isRecovering}>
           <Stack.Screen name="login" />
+          <Stack.Screen name="forgot-password" />
         </Stack.Protected>
       </Stack>
 

@@ -47,6 +47,24 @@ if (!supabaseUrl || !supabaseAnonKey) {
 // what `detectSessionInUrl` needs to hand the session off after an email link.
 const customStorage = Platform.OS === 'web' ? undefined : AsyncStorage;
 
+/**
+ * The URL fragment this page was opened with, captured *before* the client is
+ * created.
+ *
+ * `detectSessionInUrl` consumes the fragment and then rewrites the address bar
+ * with `history.replaceState`, so by the time any component mounts the evidence
+ * is gone. Two things are lost with it: whether the link was a password
+ * recovery (which decides where the user is sent) and why a link was rejected
+ * (which decides what they are told). Reading it here — module scope, above the
+ * `createClient` call in the same file — is the only placement where the
+ * ordering is guaranteed rather than incidental.
+ *
+ * Empty string on native, where there is no `window` and the deep link arrives
+ * through expo-linking instead. Parsed by `lib/auth-link.ts`.
+ */
+export const initialAuthHash =
+  Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.hash : '';
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     storage: customStorage,
