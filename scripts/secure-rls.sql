@@ -207,9 +207,50 @@ create policy "Users can delete own moods" on public.moods
 -- matches none of them, but a future `to public` policy added by hand would
 -- quietly re-expose the tables. Removing the grant means anon cannot reach
 -- these tables even then.
+--
+-- Grant `authenticated` explicitly first. Supabase's default privileges already
+-- cover it, so this is normally a no-op -- but if those defaults were ever
+-- changed, revoking anon without it leaves NO role able to read the table and
+-- every request fails with a bare "permission denied for table trades", which
+-- looks nothing like a grants problem. Idempotent, so it costs nothing to state.
+grant select, insert, update, delete on public.trades, public.moods to authenticated;
+
 revoke all on public.trades, public.moods from anon;
 
 -- ---------------------------------------------------------------------------
 -- 7. Refresh PostgREST's schema cache
 -- ---------------------------------------------------------------------------
 notify pgrst, 'reload schema';
+
+-- ---------------------------------------------------------------------------
+-- 8. Verify — read this output, do not assume
+-- ---------------------------------------------------------------------------
+-- One result set, because the SQL editor only shows the last statement's.
+--
+-- Expect, on `trades`: four "Users can own..." policies (select/insert/update/
+-- delete), trades_user_id_idx, and trades_user_source_external_id_idx UNIQUE on
+-- (user_id, source, external_id). On `moods`: four policies and
+-- moods_trade_id_idx. No policy named "Allow ... for all users" anywhere.
+--
+-- The one thing worth hunting for: a leftover UNIQUE index on
+-- (source, external_id) WITHOUT user_id. The first version of
+-- add-broker-sync.sql created one, that version was run on 2026-08-12, and the
+-- file has since been rewritten -- so the live name is not recoverable from the
+-- repo. Section 3 drops it by its expected name; if the real name differed, it
+-- is still here and still enforcing global uniqueness. Harmless while you are the
+-- only trader, wrong the moment you are not. If you see one, drop it by the name
+-- shown:  drop index public.<name>;
+select 'policy'::text as kind,
+       tablename::text as on_table,
+       policyname::text as name,
+       cmd::text        as detail
+from pg_policies
+where schemaname = 'public' and tablename in ('trades', 'moods')
+union all
+select 'index'::text,
+       tablename::text,
+       indexname::text,
+       indexdef::text
+from pg_indexes
+where schemaname = 'public' and tablename in ('trades', 'moods')
+order by kind, on_table, name;
