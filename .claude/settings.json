@@ -1,4 +1,12 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(node ./cdp-diag.mjs \"http://localhost:8081/\")",
+      "Bash(node ./cdp-nav.mjs)",
+      "Bash(netstat -ano)",
+      "Bash(curl -s -o /dev/null -w \"8081 -> %{http_code}\\\\n\" http://localhost:8081/)"
+    ]
+  },
   "enabledPlugins": {
     "expo@claude-plugins-official": true
   }

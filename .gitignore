@@ -32,11 +32,15 @@ yarn-error.*
 
 # local env files
 .env*.local
+# A plain .env holds real keys too — only .env.example belongs in git.
+.env
+!.env.example
 
 # typescript
 *.tsbuildinfo
 
-example
+# test output
+coverage/
 
 # generated native folders
 /ios
