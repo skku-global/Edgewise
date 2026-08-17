@@ -48,3 +48,8 @@ coverage/
 
 # Rendered email previews from scripts/set-email-templates.mjs --preview
 .preview-emails/
+
+# MetaEditor build output. Compiled per machine from mt5/EdgewiseSync.mq5, and
+# MT5 loads it from its own Experts folder, not from here — so the source is the
+# only copy worth tracking.
+*.ex5

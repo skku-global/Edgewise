@@ -42,7 +42,7 @@
 // and nothing is ever sent.
 
 #property copyright "Edgewise"
-#property version   "2.00"
+#property version   "2.01"
 #property description "Syncs closed trades to your Edgewise journal."
 
 //--- input parameters ------------------------------------------------------
@@ -151,6 +151,20 @@ int OnInit()
          " | server UTC", (g_utc_offset >= 0 ? "+" : "-"),
          IntegerToString((int)MathAbs(g_utc_offset) / 3600));
 
+   // Trade history is not kept on disk -- the terminal re-downloads it from the
+   // broker on every connect. Attached before that finishes, the advisor reads an
+   // empty history and backfills nothing, which is what happened here on
+   // 2026-08-12: the account had just been switched and the broker name printed
+   // blank, one line above two dry runs that each found zero deals.
+   //
+   // A warning rather than a refusal, because the connection usually comes up a
+   // second later and live trades will sync regardless; only the backfill is at
+   // risk, and reattaching costs one drag.
+   if(!TerminalInfoInteger(TERMINAL_CONNECTED))
+      Print("EdgewiseSync: WARNING -- the terminal is not connected to the broker ",
+            "yet, so history may be empty or incomplete. If the backfill below ",
+            "reports no deals, wait for the connection and drag the advisor on again.");
+
    // Signed in even for a dry run: validating the credentials is most of what a
    // dry run is for, and it fills g_user_id so the logged payload is the real one.
    if(!Login())
@@ -251,6 +265,28 @@ void BackfillHistory(const int days)
 
    Print("EdgewiseSync: backfilling ", days, " days (", total, " deals to scan)...");
 
+   // An empty window is the one outcome that used to look exactly like success:
+   // "0 deals to scan" then "0 sent, 0 failed" reads as a clean run to anyone who
+   // is not already suspicious, so the advisor appeared to work while importing
+   // nothing. It has happened on this machine -- the 2026-08-12 log shows both
+   // lines, seconds after the terminal changed accounts, with the broker name
+   // still blank because the connection was not up yet.
+   //
+   // So say so, and rank the causes by how often each is the real one. History is
+   // pulled from the broker on connect, not stored locally, so "not downloaded
+   // yet" beats "no trades" by a wide margin.
+   if(total == 0)
+   {
+      Print("EdgewiseSync: no deals in the last ", days, " days -- nothing to import. ",
+            "This is not a sync failure; the terminal handed over an empty history.");
+      Print("EdgewiseSync: usual causes, likeliest first: (1) history has not ",
+            "finished downloading -- open the Toolbox > History tab, right-click, ",
+            "set the period to All, and reattach; (2) this terminal is logged in ",
+            "to a different account than the one you trade; (3) the account really ",
+            "has no closed trades in the window -- raise BackfillDays.");
+      return;
+   }
+
    // Two passes, and the split is not stylistic. BuildRecordFromDeal calls
    // HistorySelectByPosition to find the opening deals, which REPLACES this
    // date-range selection with a position-scoped one. Building inside the walk
@@ -284,6 +320,19 @@ void BackfillHistory(const int days)
 
    Print("EdgewiseSync: ", found, " closed trades found in the window.");
 
+   // Deals exist but none of them close a position. On a funded or challenge
+   // account the first entries are the balance credit and any adjustments, which
+   // are deals with no position to close -- so this is the normal reading for an
+   // account that has been funded but not yet traded, and it needs to be said
+   // rather than left to look like a dropped import.
+   if(found == 0)
+   {
+      Print("EdgewiseSync: those ", total, " deals are all deposits, credits or ",
+            "adjustments -- none of them closes a position, so there is nothing a ",
+            "journal can review yet. Close a trade and it will arrive on its own.");
+      return;
+   }
+
    for(int i = 0; i < found; i++)
    {
       TradeRecord record;
@@ -297,7 +346,15 @@ void BackfillHistory(const int days)
          failed++;
    }
 
-   Print("EdgewiseSync: backfill done -- ", sent, " sent, ", failed, " failed.");
+   // A dry run counts a trade as "sent" because SendTrade reports success after
+   // logging the payload -- correct for the caller, and badly misleading here. The
+   // word has to change with the mode, or the summary line claims an import that
+   // never touched the network.
+   if(DryRun)
+      Print("EdgewiseSync: DRY RUN complete -- ", sent, " trades would have been ",
+            "sent, none were. Set DryRun to false to import them.");
+   else
+      Print("EdgewiseSync: backfill done -- ", sent, " sent, ", failed, " failed.");
 
    if(failed > 0)
       Print("EdgewiseSync: failures are usually the URL whitelist. See mt5/README.md.");

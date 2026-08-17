@@ -18,6 +18,25 @@ missed on each start.
 **Your PC does not need to stay on.** Trade from your phone all week, open the
 terminal on Sunday, and the week lands in the journal.
 
+## Why it can't just ask for your account number
+
+An MT5 account number is an identifier, not a credential — like a bank account
+number, knowing it grants nothing. And there is no MetaQuotes cloud API a website
+can call to ask what account 12345678 has been trading. Nothing can read your
+history from the number alone.
+
+The services that feel like *set once and forget* — Myfxbook, FX Blue, and the
+auto-sync in the bigger journals — take your account number **plus the investor
+(read-only) password plus the server name**, and then log into your account from
+their own servers. That is why it keeps working with your computer off: their
+machine is doing what your terminal does here. It also means handing a third
+party standing read access to your broker account, and for a paid journal it
+means a per-account fee, which is the tradeoff being made on your behalf.
+
+The account number is still recorded — but the advisor reads it off the terminal
+itself and stamps it on each trade, which is how the app can tell you *"37 trades
+imported · account 12345678"*. It is an output, never something you type in.
+
 ## Before you start
 
 Run these in your Supabase SQL editor, in order:
@@ -158,6 +177,11 @@ Read the Experts tab first — every failure prints there with the fix.
 
 | What you see | What it means |
 | --- | --- |
+| `0 deals to scan` / `no deals in the last 90 days` | The terminal handed over an empty history — not a sync failure. Usually history has not finished downloading: Toolbox → History tab, right-click, set the period to **All**, then drag the advisor on again. Otherwise you're logged in to a different account than the one you trade. |
+| `all deposits, credits or adjustments` | The account is funded but has no closed trades yet. Nothing is wrong; close a trade and it arrives on its own. |
+| `DRY RUN complete -- N trades would have been sent` | Working correctly, but `DryRun` is still `true` so nothing was written. Set it to `false`. |
+| `WARNING -- the terminal is not connected` | Attached before the broker connection came up, so the backfill may see nothing. Wait for the connection and reattach. |
+| `SkkuJournalSync` in the Experts list | The advisor from before 2.00, when the journal was not yet per-user. It never signs in, so every write is now refused. Remove it from the chart and use `EdgewiseSync`. |
 | `WebRequest failed ... error 4014` | URL isn't whitelisted. Step 4. It must match exactly, with no trailing slash. |
 | `WebRequest failed ... error 4060` | Algo trading is off. Tick *Allow Algo Trading* in the EA dialog and the *Algo Trading* toolbar button. |
 | `sign-in failed with HTTP 400` | Wrong email or password. If you signed up recently, confirm the address from the verification email first — unconfirmed accounts can't sign in. |
