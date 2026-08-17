@@ -109,16 +109,31 @@ create unique index if not exists trades_user_source_external_id_idx
 -- ---------------------------------------------------------------------------
 alter table public.trades enable row level security;
 
--- The wide-open single-user policies, by every name they have been given.
-drop policy if exists "Allow reads for all users"   on public.trades;
-drop policy if exists "Allow inserts for all users" on public.trades;
-drop policy if exists "Allow updates for all users" on public.trades;
-drop policy if exists "Allow deletes for all users" on public.trades;
-
-drop policy if exists "Users can read own trades"   on public.trades;
-drop policy if exists "Users can insert own trades" on public.trades;
-drop policy if exists "Users can update own trades" on public.trades;
-drop policy if exists "Users can delete own trades" on public.trades;
+-- Drop every policy on the table, by enumeration rather than by name.
+--
+-- This replaces a list of `drop policy if exists` calls that guessed at the
+-- legacy names and guessed wrong: the live policy was "Allow all access to
+-- trades", so every drop was a silent no-op and the four correct policies below
+-- were created *alongside* it. That is the worst possible outcome, because
+-- permissive policies are OR'd together -- a single `using (true)` granted to
+-- `public` outranks any number of correct per-user policies, and the migration
+-- still reports success. The table stayed world-readable behind eight policies
+-- that looked right.
+--
+-- Enumerating pg_policies cannot miss a name, including names introduced by
+-- hand in the dashboard. Everything wanted is recreated immediately below, in
+-- the same transaction, so there is no window where the table is unprotected.
+do $$
+declare
+  doomed text;
+begin
+  for doomed in
+    select policyname from pg_policies
+    where schemaname = 'public' and tablename = 'trades'
+  loop
+    execute format('drop policy %I on public.trades', doomed);
+  end loop;
+end $$;
 
 create policy "Users can read own trades" on public.trades
   for select to authenticated
@@ -148,15 +163,19 @@ create policy "Users can delete own trades" on public.trades
 -- columns to disagree; the subquery hits trades by primary key.
 alter table public.moods enable row level security;
 
-drop policy if exists "Allow reads for all users"   on public.moods;
-drop policy if exists "Allow inserts for all users" on public.moods;
-drop policy if exists "Allow updates for all users" on public.moods;
-drop policy if exists "Allow deletes for all users" on public.moods;
-
-drop policy if exists "Users can read own moods"   on public.moods;
-drop policy if exists "Users can insert own moods" on public.moods;
-drop policy if exists "Users can update own moods" on public.moods;
-drop policy if exists "Users can delete own moods" on public.moods;
+-- Same enumeration as for trades, and for the same reason: the live policy here
+-- was "Allow all access to moods", which no hand-written drop list caught.
+do $$
+declare
+  doomed text;
+begin
+  for doomed in
+    select policyname from pg_policies
+    where schemaname = 'public' and tablename = 'moods'
+  loop
+    execute format('drop policy %I on public.moods', doomed);
+  end loop;
+end $$;
 
 create policy "Users can read own moods" on public.moods
   for select to authenticated
@@ -230,7 +249,8 @@ notify pgrst, 'reload schema';
 -- Expect, on `trades`: four "Users can own..." policies (select/insert/update/
 -- delete), trades_user_id_idx, and trades_user_source_external_id_idx UNIQUE on
 -- (user_id, source, external_id). On `moods`: four policies and
--- moods_trade_id_idx. No policy named "Allow ... for all users" anywhere.
+-- moods_trade_id_idx. Every policy should read `to authenticated` -- the name a
+-- policy carries means nothing, the role and the expression are what decide.
 --
 -- The one thing worth hunting for: a leftover UNIQUE index on
 -- (source, external_id) WITHOUT user_id. The first version of
@@ -240,10 +260,47 @@ notify pgrst, 'reload schema';
 -- is still here and still enforcing global uniqueness. Harmless while you are the
 -- only trader, wrong the moment you are not. If you see one, drop it by the name
 -- shown:  drop index public.<name>;
+-- FIRST, an assertion, because "read this output" failed once already.
+--
+-- The original version of this section printed each policy's name and `cmd` and
+-- asked you to check them. "Allow all access to trades | ALL" sitting beside
+-- four per-user policies reads as unremarkable, and it was missed -- the columns
+-- that would have given it away, `roles` and `qual`, were not selected.
+--
+-- A permissive policy granted to `public` with `using (true)` is not one flaw
+-- among several; it cancels every other policy on the table, because permissive
+-- policies are OR'd. So it aborts the migration instead of being displayed.
+-- Raising rolls the whole script back, which is the right outcome: either the
+-- tables end up isolated, or nothing changed and the reason is on screen.
+do $$
+declare
+  offender record;
+begin
+  for offender in
+    select tablename, policyname, permissive,
+           array_to_string(roles, ',') as who,
+           coalesce(qual, with_check)  as expr
+    from pg_policies
+    where schemaname = 'public'
+      and tablename in ('trades', 'moods')
+      and (roles && '{public,anon}'::name[] or qual = 'true' or with_check = 'true')
+  loop
+    raise exception
+      'Policy "%" on public.% defeats per-user isolation: % to %, expression %. '
+      'Permissive policies are OR''d, so this one grants access no matter what '
+      'the other policies say. Nothing was changed. Drop it and re-run.',
+      offender.policyname, offender.tablename, offender.permissive,
+      offender.who, coalesce(offender.expr, '(none)');
+  end loop;
+end $$;
+
 select 'policy'::text as kind,
        tablename::text as on_table,
        policyname::text as name,
-       cmd::text        as detail
+       -- roles and the expression, not just cmd: who a policy applies to and
+       -- what it tests are the whole question. `cmd` alone hides both.
+       (cmd || ' to ' || array_to_string(roles, ',') ||
+        ' using ' || coalesce(qual, with_check, '(none)'))::text as detail
 from pg_policies
 where schemaname = 'public' and tablename in ('trades', 'moods')
 union all
