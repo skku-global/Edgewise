@@ -120,6 +120,13 @@ const requireConfirmation = has("--require-confirmation");
 const configureSmtp = has("--smtp");
 const siteUrl = valueOf("--site-url") ?? DEFAULT_SITE_URL;
 
+/**
+ * The display name recipients see. Separate from --smtp because changing it does
+ * not need the credentials, and re-sending a working SMTP password just to
+ * correct a label is a needless way to break sending.
+ */
+const senderName = valueOf("--sender-name");
+
 if (skipConfirmation && requireConfirmation) {
   fail("--skip-confirmation and --require-confirmation are opposites. Pick one.");
 }
@@ -319,6 +326,11 @@ if (requireConfirmation && config.mailer_autoconfirm) {
   console.log("  confirm email   OFF -> ON");
 }
 
+if (senderName && config.smtp_sender_name !== senderName) {
+  patch.smtp_sender_name = senderName;
+  console.log(`  sender name     ${config.smtp_sender_name || "(not set)"} -> ${senderName}`);
+}
+
 if (configureSmtp) {
   const host = (env.SMTP_HOST ?? "").trim();
   const port = (env.SMTP_PORT ?? "465").trim();
@@ -369,14 +381,57 @@ if (Object.keys(patch).length === 0) {
 
 await management("PATCH", `/v1/projects/${projectRef}/config/auth`, patch);
 
-const after = await management("GET", `/v1/projects/${projectRef}/config/auth`);
+/**
+ * The config endpoint is eventually consistent: a GET issued immediately after a
+ * successful PATCH regularly returns the *old* values. Reading once and printing
+ * it is worse than not printing it at all, because unchanged output next to
+ * "Applying" reads as a silently failed write — which is exactly the class of
+ * problem this script exists to eliminate.
+ *
+ * So poll until the values we sent come back, and if they never do, say that
+ * plainly rather than showing a stale snapshot as if it were current.
+ */
+async function readBackUntilApplied() {
+  const expected = Object.entries(patch).filter(([key]) => key !== "smtp_pass");
+
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    const current = await management("GET", `/v1/projects/${projectRef}/config/auth`);
+    const settled = expected.every(([key, value]) => String(current[key]) === String(value));
+
+    if (settled || attempt === 6) {
+      return { config: current, settled };
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+  }
+
+  // Unreachable: the loop returns on its final attempt.
+  return { config: {}, settled: false };
+}
+
+const { config: after, settled } = await readBackUntilApplied();
 
 heading("Now");
 console.log(`  Site URL             ${after.site_url || "(not set)"}`);
 console.log(`  Confirm email        ${after.mailer_autoconfirm ? "OFF" : "ON"}`);
 console.log(`  Redirect URLs        ${(after.uri_allow_list ?? "").split(",").join("\n                       ")}`);
 console.log(`  Custom SMTP host     ${after.smtp_host || "(none)"}`);
+if (after.smtp_host) {
+  console.log(`  SMTP sender          ${after.smtp_admin_email || "(not set)"} as "${after.smtp_sender_name ?? ""}"`);
+}
+
+if (!settled) {
+  console.log(
+    "\n  The values above do not yet match what was just sent. This endpoint is\n" +
+      "  eventually consistent, so it is very likely already applied and simply\n" +
+      "  not visible yet — run this script again with no flags to confirm before\n" +
+      "  assuming anything went wrong.",
+  );
+}
+
 console.log(
-  "\n  Rate limits for a new SMTP setup start at 30 emails an hour and are\n" +
-    "  raised under Authentication -> Rate Limits.\n",
+  `\n  Sending is capped at ${after.rate_limit_email_sent ?? "?"} emails an hour, and at one per\n` +
+    `  ${after.smtp_max_frequency ?? "?"} seconds to any single address — a second attempt inside that\n` +
+    "  window is refused, which looks identical to no email at all. Both are\n" +
+    "  under Authentication -> Rate Limits.\n",
 );
