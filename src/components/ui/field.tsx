@@ -40,12 +40,33 @@ export type FieldProps = Omit<TextInputProps, 'style'> & {
   hint?: string;
   /** Sets the input in the mono face, for prices and sizes. */
   numeric?: boolean;
+  /**
+   * Control pinned inside the right edge of the input — the password reveal
+   * toggle is the only current use. Sized by `TrailingWidth` rather than
+   * measured, so the input's text padding is reserved before the child renders
+   * and the caret never slides sideways on first paint.
+   */
+  trailing?: React.ReactNode;
   containerStyle?: StyleProp<ViewStyle>;
   inputStyle?: StyleProp<TextStyle>;
 };
 
+/** Width reserved for `trailing`: a 44pt touch target less the input padding. */
+const TrailingWidth = 44;
+
 export const Field = forwardRef<TextInput, FieldProps>(function Field(
-  { label, error, hint, numeric = false, containerStyle, inputStyle, onFocus, onBlur, ...rest },
+  {
+    label,
+    error,
+    hint,
+    numeric = false,
+    trailing,
+    containerStyle,
+    inputStyle,
+    onFocus,
+    onBlur,
+    ...rest
+  },
   ref,
 ) {
   const theme = useTheme();
@@ -60,29 +81,34 @@ export const Field = forwardRef<TextInput, FieldProps>(function Field(
         </ThemedText>
       ) : null}
 
-      <TextInput
-        ref={ref}
-        style={[
-          styles.input,
-          numeric && styles.numeric,
-          focused && styles.focused,
-          !!error && styles.errored,
-          inputStyle,
-        ]}
-        placeholderTextColor={theme.color.textTertiary}
-        // iOS renders the caret in the system blue otherwise, which is the one
-        // colour the brand palette does not contain.
-        selectionColor={theme.color.accent}
-        onFocus={(event) => {
-          setFocused(true);
-          onFocus?.(event);
-        }}
-        onBlur={(event) => {
-          setFocused(false);
-          onBlur?.(event);
-        }}
-        {...rest}
-      />
+      <View style={styles.inputRow}>
+        <TextInput
+          ref={ref}
+          style={[
+            styles.input,
+            numeric && styles.numeric,
+            focused && styles.focused,
+            !!error && styles.errored,
+            !!trailing && styles.withTrailing,
+            inputStyle,
+          ]}
+          placeholderTextColor={theme.color.textTertiary}
+          // iOS renders the caret in the system blue otherwise, which is the one
+          // colour the brand palette does not contain.
+          selectionColor={theme.color.accent}
+          onFocus={(event) => {
+            setFocused(true);
+            onFocus?.(event);
+          }}
+          onBlur={(event) => {
+            setFocused(false);
+            onBlur?.(event);
+          }}
+          {...rest}
+        />
+
+        {trailing ? <View style={styles.trailing}>{trailing}</View> : null}
+      </View>
 
       {error ? (
         <ThemedText variant="caption" tone="loss">
@@ -102,6 +128,12 @@ const sheet = (t: Theme) =>
     group: {
       gap: t.space.one,
     },
+    // Positioning context for `trailing`. Not a flex row: the input keeps its
+    // own full width so the border still draws around the whole control.
+    inputRow: {
+      position: 'relative',
+      justifyContent: 'center',
+    },
     input: {
       height: 48,
       borderWidth: 1,
@@ -118,6 +150,19 @@ const sheet = (t: Theme) =>
     numeric: {
       ...t.type.mono,
       fontSize: 16,
+    },
+    // Keeps typed text from running underneath the toggle.
+    withTrailing: {
+      paddingRight: TrailingWidth,
+    },
+    trailing: {
+      position: 'absolute',
+      right: 0,
+      top: 0,
+      bottom: 0,
+      width: TrailingWidth,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     focused: {
       borderColor: t.color.focus,
