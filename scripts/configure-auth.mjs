@@ -276,7 +276,11 @@ if (!config.smtp_host) {
       "    Fix it one of three ways:\n" +
       "      a) sign up using the email on your own Supabase account (works now)\n" +
       "      b) --apply --skip-confirmation, so sign-up needs no email at all\n" +
-      "      c) --apply --smtp with a real provider, for delivery to anyone",
+      "      c) --apply --smtp with a real provider, for delivery to anyone.\n" +
+      "         Resend is the shortest: free, no approval step, 100/day, and its\n" +
+      "         Supabase guide gives smtp.resend.com:465, user `resend`, password\n" +
+      "         = the API key. It does require a domain you can add DNS records\n" +
+      "         to; onboarding@resend.dev is test-only and will not substitute.",
   );
 }
 
@@ -317,7 +321,7 @@ if (requireConfirmation && config.mailer_autoconfirm) {
 
 if (configureSmtp) {
   const host = (env.SMTP_HOST ?? "").trim();
-  const port = (env.SMTP_PORT ?? "587").trim();
+  const port = (env.SMTP_PORT ?? "465").trim();
   const user = (env.SMTP_USER ?? "").trim();
   const pass = env.SMTP_PASS ?? "";
   const sender = (env.SMTP_SENDER ?? "").trim();
@@ -327,10 +331,24 @@ if (configureSmtp) {
       "--smtp needs SMTP_HOST, SMTP_USER, SMTP_PASS and SMTP_SENDER.\n" +
         "  SMTP_SENDER is the from-address, and with most providers it has to be\n" +
         "  on a domain you have verified with them.\n\n" +
-        "  Resend, for example:\n" +
-        "    SMTP_HOST=smtp.resend.com SMTP_PORT=587 SMTP_USER=resend \\\n" +
-        "    SMTP_PASS=re_... SMTP_SENDER=you@your-verified-domain \\\n" +
+        "  Resend, whose own Supabase guide specifies port 465:\n" +
+        "    SMTP_HOST=smtp.resend.com SMTP_PORT=465 SMTP_USER=resend \\\n" +
+        "    SMTP_PASS=re_... SMTP_SENDER=no-reply@your-verified-domain \\\n" +
         "    SUPABASE_ACCESS_TOKEN=sbp_... node scripts/configure-auth.mjs --apply --smtp",
+    );
+  }
+
+  // Worth stopping for. `onboarding@resend.dev` looks like a way to skip domain
+  // verification, and it is not: Resend accepts it only when the recipient is
+  // your own account address and 403s every other one. Applied here it would
+  // trade one silent-refusal problem for an identical one.
+  if (/@resend\.dev$/i.test(sender)) {
+    fail(
+      `SMTP_SENDER is ${sender}, which cannot send to anyone but your own Resend\n` +
+        "  account address — every other recipient comes back 403. That is the same\n" +
+        "  failure the built-in Supabase mailer already has.\n\n" +
+        "  Add a domain at https://resend.com/domains, verify it, then use an\n" +
+        "  address on it (no-reply@your-domain). Nothing was changed.",
     );
   }
 
