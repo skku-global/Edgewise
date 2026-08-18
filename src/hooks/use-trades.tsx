@@ -13,9 +13,38 @@
  * cannot be a hook. Both draw their column lists from `trade-table.ts` so the
  * two cannot disagree about what a trade is — see the note there for the bug
  * that made the split visible.
+ *
+ * ## Why this is a provider and not just a hook
+ *
+ * It was a plain hook, and four screens called it — dashboard, trades, calendar,
+ * reports. Expo Router keeps visited tabs mounted, so all four copies ran at
+ * once, and navigating to the second one threw:
+ *
+ *     cannot add `postgres_changes` callbacks for realtime:trades-live
+ *     after `subscribe()`
+ *
+ * `supabase.channel(topic)` returns the *existing* channel when one with that
+ * topic is already registered rather than creating a fresh one (realtime-js
+ * 2.112.2, `RealtimeClient.channel`), and `.on()` on an already-subscribed
+ * channel throws. With a fixed topic the first screen to mount won the channel
+ * and every later one crashed — the dashboard looked fine while the other three
+ * were dead.
+ *
+ * One provider is the fix, and it buys more than the crash: four copies also
+ * meant four sockets and four identical query pairs, so a single inserted trade
+ * fired four reloads and eight round trips.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  createContext,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PropsWithChildren,
+} from 'react';
 import { AppState } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
@@ -40,6 +69,22 @@ const RELOAD_DEBOUNCE_MS = 400;
  * closed on the desktop terminal is on the phone before the user looks.
  */
 const POLL_INTERVAL_MS = 60_000;
+
+/**
+ * Channel topics run `trades-live-1`, `-2`, and so on: unique per effect run,
+ * never reused.
+ *
+ * A fixed topic is what caused the crash described at the top of this file, and
+ * a single provider does not on its own close the hole. `removeChannel` is async
+ * and awaits a round trip to the server before the channel leaves the client's
+ * list (`removeChannel` → `teardown` → `_remove`), while a React cleanup is
+ * synchronous and cannot await anything. So a StrictMode double invoke, a fast
+ * remount or a hot reload can all re-enter the effect while the old channel is
+ * still registered, and a fixed topic would hand that subscribed channel
+ * straight back. A fresh topic each time cannot collide.
+ */
+const CHANNEL_PREFIX = 'trades-live-';
+let channelCounter = 0;
 
 type RawTrade = {
   id: number;
@@ -111,7 +156,23 @@ function describeLoadError(err: unknown): string {
   return 'Unable to load your trades right now.';
 }
 
+const TradesContext = createContext<UseTradesResult | null>(null);
+
+/**
+ * The shared trade list. Same return shape as the old standalone hook, so the
+ * four screens calling it did not have to change.
+ */
 export function useTrades(): UseTradesResult {
+  const value = use(TradesContext);
+
+  if (!value) {
+    throw new Error('useTrades must be used inside <TradesProvider>');
+  }
+
+  return value;
+}
+
+export function TradesProvider({ children }: PropsWithChildren) {
   const [trades, setTrades] = useState<LoadedTrade[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -228,8 +289,21 @@ export function useTrades(): UseTradesResult {
    * costs nothing.
    */
   useEffect(() => {
+    // A hot reload swaps this module in without running the old cleanup, and
+    // `removeChannel` may not have finished unregistering the previous channel
+    // either. Either way a socket would be left open, so sweep anything still
+    // carrying this prefix before opening a new one. Safe precisely because one
+    // provider means no other legitimate channel shares it.
+    for (const stale of supabase.getChannels()) {
+      if (stale.topic.startsWith(`realtime:${CHANNEL_PREFIX}`)) {
+        supabase.removeChannel(stale);
+      }
+    }
+
+    channelCounter += 1;
+
     const channel = supabase
-      .channel('trades-live')
+      .channel(`${CHANNEL_PREFIX}${channelCounter}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trades' }, scheduleReload)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'moods' }, scheduleReload)
       .subscribe((status) => {
@@ -241,7 +315,10 @@ export function useTrades(): UseTradesResult {
         clearTimeout(reloadTimer.current);
         reloadTimer.current = null;
       }
+      // Not awaited, and cannot be — React cleanups are synchronous. The unique
+      // topic above is what makes that safe.
       supabase.removeChannel(channel);
+      setLive(false);
     };
   }, [scheduleReload]);
 
@@ -272,7 +349,12 @@ export function useTrades(): UseTradesResult {
     return () => subscription.remove();
   }, [load]);
 
-  return { trades, loading, refreshing, error, refresh, live };
+  const value = useMemo<UseTradesResult>(
+    () => ({ trades, loading, refreshing, error, refresh, live }),
+    [trades, loading, refreshing, error, refresh, live],
+  );
+
+  return <TradesContext.Provider value={value}>{children}</TradesContext.Provider>;
 }
 
 /**
