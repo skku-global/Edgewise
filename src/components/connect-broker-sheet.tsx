@@ -215,7 +215,7 @@ export function ConnectBrokerSheet({ visible, onClose, trades, live }: ConnectBr
           </ThemedText>
           <ThemedText variant="caption" tone="textTertiary">
             Only closed trades are sent, and re-sending is safe — each trade carries its
-            broker ticket, so importing twice cannot duplicate a row.
+            broker position id, so importing twice cannot duplicate a row.
           </ThemedText>
         </Card>
       </View>

@@ -136,7 +136,7 @@ many of them. The EA notices the expiry, refreshes, and re-sends — you'll see
 The EA only sends **closed** trades. A journal reviews completed trades, and an
 open position has no exit price or P/L to review yet.
 
-Re-sending is safe. Each trade carries its broker deal ticket, the database has a
+Re-sending is safe. Each trade carries its broker position id, the database has a
 unique index on `(user_id, source, external_id)`, and the request names that index
 as its conflict target so Postgres merges rather than inserts. Running the
 backfill a hundred times produces the same rows once.

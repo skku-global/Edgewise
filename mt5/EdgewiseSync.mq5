@@ -16,10 +16,23 @@
 //     2. While running, it pushes live. Every position you close is sent within
 //        a second of closing.
 //
-//   Re-sending is safe. Each trade carries its broker deal ticket, the database
+//   Re-sending is safe. Each trade carries its broker POSITION id, the database
 //   has a unique index on (user_id, source, external_id), and the request asks
 //   Postgres to merge duplicates. Running the backfill a hundred times produces
 //   the same rows once.
+//
+//   The position id rather than the closing deal ticket, because the app can also
+//   import an MT5 HTML report, and that report keys its Positions table on the
+//   position. Keyed on the deal ticket here, the same trade arriving by both
+//   routes would land as two rows. So the two paths have to agree on one
+//   identifier, and the position is the one both of them can see.
+//
+//   One consequence, accepted deliberately: a position closed in several parts
+//   has several closing deals but only one id, so it becomes one row whose exit
+//   price and money come from the last part, rather than one row per part. That
+//   is exactly what the report shows, and it matches how a trader talks about the
+//   trade. The entry price is already volume-weighted across every entry into the
+//   position, so this is the same choice applied to the other end of it.
 //
 // WHY IT NEEDS YOUR EMAIL AND PASSWORD
 //   The journal moved from a single-user database to per-user Row Level
@@ -42,7 +55,7 @@
 // and nothing is ever sent.
 
 #property copyright "Edgewise"
-#property version   "2.01"
+#property version   "2.02"
 #property description "Syncs closed trades to your Edgewise journal."
 
 //--- input parameters ------------------------------------------------------
@@ -69,7 +82,7 @@ input bool   VerboseLog       = true;  // Log each trade as it is sent
 //
 // user_id leads the list because the index is per user. It used to be
 // (source, external_id) globally, which collides between two traders whose
-// brokers happen to issue the same deal ticket -- and the second one's upsert
+// brokers happen to issue the same position id -- and the second one's upsert
 // would resolve onto a row RLS hides from them, which Postgres cannot report
 // sensibly.
 #define TRADES_PATH   "/rest/v1/trades?on_conflict=user_id,source,external_id"
@@ -105,7 +118,10 @@ struct TradeRecord
    double   swap;
    datetime opened_at;      // earliest entry into the position
    datetime closed_at;
-   long     ticket;         // closing deal ticket, the dedup key
+   long     ticket;         // closing deal ticket -- named in logs, not the key
+   long     position_id;    // the position this closed. THE DEDUP KEY: the HTML
+                            // report the app imports keys on this too, so a trade
+                            // arriving both ways merges instead of doubling.
    int      digits;         // price precision for this symbol
 };
 
@@ -381,6 +397,7 @@ bool BuildRecordFromDeal(const ulong close_ticket, TradeRecord &record)
    const long position_id = HistoryDealGetInteger(close_ticket, DEAL_POSITION_ID);
 
    record.ticket     = (long)close_ticket;
+   record.position_id = position_id;
    record.symbol     = HistoryDealGetString(close_ticket, DEAL_SYMBOL);
    record.exit_price = HistoryDealGetDouble(close_ticket, DEAL_PRICE);
    record.volume     = HistoryDealGetDouble(close_ticket, DEAL_VOLUME);
@@ -603,7 +620,9 @@ string BuildTradeJson(const TradeRecord &record)
    json += "\"notes\":null,";
 
    json += "\"source\":\""        + SOURCE_TAG + "\",";
-   json += "\"external_id\":\""   + IntegerToString(record.ticket) + "\",";
+   // The position, not the closing deal -- the imported HTML report keys on the
+   // same thing, so one trade cannot arrive twice under two different ids.
+   json += "\"external_id\":\""   + IntegerToString(record.position_id) + "\",";
    json += "\"account_login\":\"" + IntegerToString(account) + "\",";
 
    json += "\"opened_at\":\"" + IsoUtc(record.opened_at) + "\",";
@@ -792,8 +811,10 @@ int PostTradeOnce(const string json)
    const string url = SupabaseUrl + TRADES_PATH;
 
    // resolution=merge-duplicates makes this an upsert against the unique index
-   // on (user_id, source, external_id), so re-sending a deal updates it instead
-   // of creating a second row. return=minimal keeps the response tiny.
+   // on (user_id, source, external_id), so re-sending a position updates it
+   // instead of creating a second row -- and an HTML report imported in the app
+   // lands on the same rows, because it carries the same position ids.
+   // return=minimal keeps the response tiny.
    const string headers =
       "apikey: " + SupabaseKey + "\r\n"
       "Authorization: Bearer " + g_access_token + "\r\n"
