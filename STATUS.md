@@ -292,20 +292,138 @@ decorative, the EA's `user_id` + `on_conflict=user_id,source,external_id` reques
 now has columns to target, and realtime is on so `useTrades` is not merely
 polling.
 
-## What is left
+## Web nav fixed — 2026-08-17, commit `836d633`
 
-1. **Sign up through the UI with a real address and click the link.** The one
-   step nothing here can do for you. Use an address you can open;
-   `smitthy122@gmail.com` is proven deliverable. Now that Site URL points at
-   8081 the link should land back in the app.
-2. **Compile the EA** — `mt5/EdgewiseSync.mq5` has never been opened in
-   MetaEditor (F7). Attach with `DryRun = true` and read the Experts tab.
+Two complaints, one bug: *"the NAV bar is jampacked"* and *"I don't think the nav
+links are working"*.
+
+`TabTrigger asChild` renders a Radix `Slot` and passes its own
+`style={{ flexDirection: 'row', justifyContent: 'space-between' }}` down through
+it. Radix's `mergeProps` merges `style` **only for props the child element
+declares for itself** — the loop is `for (const propName in childProps)`. And
+`<NavLink>{label}</NavLink>` declares nothing but `children`, so that style
+arrived untouched in `rest`. `NavLink` then spread `{...rest}` *after* its own
+`style`, replacing the entire callback.
+
+Every link silently lost its padding, its pill radius, and its hover, focused and
+pressed backgrounds. Hence both symptoms at once: five bare labels a couple of
+pixels apart, and a hit area shrunk to the glyphs with nothing acknowledging a
+click. **The navigation was firing the whole time.**
+
+`tsc` and eslint accept either spread order, so nothing could have caught it.
+`src/components/__tests__/nav-link-test.tsx` now does — 7 tests asserting on the
+*resolved* style rather than on the ordering, so it survives a rewrite. Restoring
+the old order fails it with `paddingHorizontal: Expected: 16, Received: undefined`.
+
+Also fixed alongside: `flexShrink` defaults to **0** in React Native, not 1 as on
+the web, so an overflowing bar does not compress — it pushes the rightmost links
+past the edge where they are genuinely unclickable. The wordmark text now drops
+below 720px.
+
+Caveat worth keeping honest: the style loss is empirically proven by the test.
+The claim that navigation fired all along is **source-verified only** — traced
+through expo-router 6.0.24 and react-native-web 0.21 — because no browser is
+available in this environment.
+
+Suite: 197/197 across 13 suites. `tsc --noEmit` and `eslint` both clean.
+
+## MT5 sync installed and compiled — 2026-08-17, commit `e1da0b8`
+
+The user's belief was that sync should work from their account number alone, and
+that they had once set something up on a computer that then worked forever.
+
+**An account number is an identifier, not a credential** — like a bank account
+number, knowing it grants nothing, and there is no MetaQuotes cloud API to ask
+what an account has traded. The services that feel like set-once-and-forget
+(Myfxbook, FX Blue, the bigger journals' auto-sync) take the account number
+**plus the investor read-only password plus the server name**, then log in from
+their own servers. That is why they survive the PC being off — and it means
+standing third-party read access to the broker account, plus a per-account fee.
+
+Our advisor reads the account number off the terminal and stamps it on each
+trade, which is how the app can say *"37 trades imported · account 12345678"*.
+It is an output, never an input.
+
+### What was actually wrong, from the terminal's own log
+
+`MQL5\Logs\20260812.log` had the answer:
+
+```
+04:28:54  SkkuJournalSync: DRY RUN -- payloads are logged, nothing is sent.
+04:28:54  SkkuJournalSync: attached to EURUSD | account ******** |
+04:28:54  SkkuJournalSync: backfilling 90 days (0 deals to scan)...
+04:28:54  SkkuJournalSync: 0 closed trades found in the window.
+04:28:54  SkkuJournalSync: backfill done -- 0 sent, 0 failed.
+04:28:54  Experts  automated trading is disabled because the account has been changed
+```
+
+Four separate reasons it could never have worked, none of them a sync failure:
+
+1. **`DryRun` was `true`.** Nothing would have been sent regardless.
+2. **`0 deals to scan`.** MT5 re-downloads history from the broker on connect and
+   keeps none on disk, so an advisor attached before the connection is up reads an
+   empty history. Note the blank broker name and `account has been changed` in the
+   same second — it was attached mid-connect.
+3. **The advisor in `MQL5\Experts` was `SkkuJournalSync` v1.00 (Aug 11)** — the
+   pre-rename version. `grep -c "auth/v1/token"` returns **0**: it never signs in,
+   sends `Authorization: Bearer <anon key>`, and upserts on the old global
+   `on_conflict=source,external_id`. Against the per-user policies from
+   `secure-rls.sql` every write it attempts is refused.
+4. **`EdgewiseSync` was never in the Experts folder at all.** The `.ex5` next to
+   the `.mq5` in `mt5/` had been compiled *in the repo folder*, where MT5's
+   Navigator never looks.
+
+### Done without needing the user
+
+Copied `EdgewiseSync.mq5` into
+`%APPDATA%\MetaQuotes\Terminal\D0E8209F77C8CF37AD8BF550E51FF075\MQL5\Experts\`
+and compiled it **headlessly** — no MetaEditor GUI, no F7:
+
+```
+metaeditor64.exe /compile:"<path>\EdgewiseSync.mq5" /log:"<logfile>"
+```
+
+`Result: 0 errors, 0 warnings`. Note it **exits 1 even on success** — trust the
+log, not the exit code. The log is UTF-16, so `Get-Content -Encoding Unicode`.
+
+`config/common.ini` also confirms `[Experts] Enabled=1` and `WebRequest=1`, so
+algo trading and web requests are both permitted. **`WebRequestUrl` is an
+encrypted blob**, so whether the Supabase host is on the allow-list cannot be
+read from disk — only a run can tell, and `error 4014` is the answer if not.
+
+### The fix in the advisor itself
+
+The real defect was that **a zero-history run was indistinguishable from a
+working one**: `0 deals to scan` → `0 sent, 0 failed` reads as a clean import.
+Three outcomes now name themselves, and the fourth is caught earlier:
+
+- **No deals in the window** — stated as an empty history, with causes ranked
+  (still downloading → wrong account → genuinely no trades).
+- **Deals but none closing** — the normal reading for a funded account that has
+  not traded; a balance credit closes no position.
+- **A dry run's summary** counted trades as "sent" because `SendTrade` returns
+  true after logging the payload. It now reports how many *would* have been sent.
+- **`TERMINAL_CONNECTED` false at attach** now warns, which is the upstream cause
+  of the first case.
+
+`*.ex5` added to `.gitignore` — compiled per machine, and MT5 loads it from its
+own Experts folder, so only the source is worth tracking.
+
+## What is left (updated 2026-08-17)
+
+1. **Attach the advisor — 3 minutes, and the only step left on sync.** Open
+   MetaTrader, **wait for the broker name to appear** before touching anything.
+   Toolbox → History → right-click → period **All**. Then drag **`EdgewiseSync`**
+   (not `SkkuJournalSync`) onto any chart, tick *Allow Algo Trading*, fill the
+   four inputs, leave `DryRun = true` for the first run, and read the Experts tab
+   — it now names every failure mode. Then set `DryRun = false` and reattach.
+2. **Sign up through the UI with a real address and click the link.** Still the
+   one step nothing here can do. `smitthy122@gmail.com` is proven deliverable.
+   This also gates the advisor: an unconfirmed account cannot sign in, so
+   `Login()` would fail with HTTP 400.
 3. **Chat** — `EXPO_PUBLIC_CLAUDE_API_KEY` is still empty, deliberately.
 4. **A physical device** — browser only so far; the accelerometer restlessness
    flag is untested.
-5. **Rotate the two credentials** used in this session (the Supabase PAT and the
+5. **Rotate the two credentials** used on 2026-08-17 (the Supabase PAT and the
    Resend API key). Both were pasted into a chat transcript. Neither was written
    to `.env` or committed.
-
-
-
