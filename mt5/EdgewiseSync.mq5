@@ -55,7 +55,7 @@
 // and nothing is ever sent.
 
 #property copyright "Edgewise"
-#property version   "2.02"
+#property version   "2.03"
 #property description "Syncs closed trades to your Edgewise journal."
 
 //--- input parameters ------------------------------------------------------
@@ -613,11 +613,18 @@ string BuildTradeJson(const TradeRecord &record)
    json += "\"commission\":"    + DoubleToString(record.commission, 2) + ",";
    json += "\"swap\":"          + DoubleToString(record.swap, 2) + ",";
 
-   // setup_type is deliberately null: the broker has no idea WHY the trade was
-   // taken. The user classifies it in the app afterwards, which is also where
-   // the mood gets attached. That is the whole point of the tagging queue.
-   json += "\"setup_type\":null,";
-   json += "\"notes\":null,";
+   // setup_type and notes are deliberately ABSENT here, not null. The broker
+   // has no idea WHY the trade was taken; the user classifies it in the app
+   // afterwards, which is also where the mood gets attached. That is the whole
+   // point of the tagging queue.
+   //
+   // Sending them as null would be actively destructive rather than merely
+   // redundant. This posts with resolution=merge-duplicates, so PostgREST turns
+   // a re-send -- a repeated backfill, a partial close, a second run after
+   // DryRun -- into ON CONFLICT DO UPDATE, and every column NAMED in the body
+   // gets overwritten. A trade the user had already classified would come back
+   // untagged. Omitted, both are untouched on conflict and default to null on
+   // the first insert, which is the same result with none of the damage.
 
    json += "\"source\":\""        + SOURCE_TAG + "\",";
    // The position, not the closing deal -- the imported HTML report keys on the

@@ -1,0 +1,75 @@
+<!--
+  A trimmed MT5 "Report" export, kept as the parser fixture.
+
+  Hand-built rather than captured, and deliberately faithful to the parts that
+  break parsers: Time and Price each appear twice in the Positions header (open,
+  then close), symbols come out lowercase, thousands are separated by a
+  non-breaking space, and the summary rows under the table use colspan so they
+  have fewer cells than a trade row.
+
+  The Orders and Deals sections are here on purpose. Deals also has Symbol,
+  Volume and Profit columns, so a parser that hunts for a header rather than
+  tracking which section it is in would read the fills as trades and multiply
+  the history.
+
+  Account login is 12345678 -- a placeholder, never a real one.
+-->
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<title>Trade History Report</title>
+</head>
+<body topmargin="1" marginheight="1">
+<div align="center">
+<table cellspacing="1" cellpadding="3" border="0" width="100%">
+<tr align="center"><td colspan="13"><div style="font: 20pt Times New Roman"><b>Trade History Report</b></div></td></tr>
+<tr align="left"><td colspan="13"><b>Name:</b> Test Trader</td></tr>
+<tr align="left"><td colspan="13"><b>Account:</b> 12345678 (USD, MetaQuotes-Demo, Hedge)</td></tr>
+<tr align="left"><td colspan="13"><b>Company:</b> MetaQuotes Ltd.</td></tr>
+<tr align="left"><td colspan="13"><b>Date:</b> 2026.08.18 12:00</td></tr>
+<tr><td colspan="13">&nbsp;</td></tr>
+
+<tr align="center" bgcolor="#E5E5E5"><td colspan="13"><b>Positions</b></td></tr>
+<tr align="center" bgcolor="#E5E5E5">
+<td>Time</td><td>Position</td><td>Symbol</td><td>Type</td><td>Volume</td><td>Price</td><td>S / L</td><td>T / P</td><td>Time</td><td>Price</td><td>Commission</td><td>Swap</td><td>Profit</td>
+</tr>
+<tr align="right" bgcolor="#FFFFFF">
+<td nowrap>2026.08.01 09:15:22</td><td>512345678</td><td>eurusd</td><td>buy</td><td>0.50</td><td>1.09120</td><td>1.08900</td><td>1.09600</td><td nowrap>2026.08.01 11:42:07</td><td>1.09480</td><td>-3.50</td><td>-1.20</td><td>180.00</td>
+</tr>
+<tr align="right" bgcolor="#F7F7F7">
+<td nowrap>2026.07.02 14:00:00</td><td>512345679</td><td>xauusd</td><td>sell</td><td>1.00</td><td>2410.55</td><td>&nbsp;</td><td>&nbsp;</td><td nowrap>2026.07.02 16:30:11</td><td>2398.10</td><td>-7.00</td><td>0.00</td><td>1&nbsp;245.00</td>
+</tr>
+<tr align="right" bgcolor="#FFFFFF">
+<td nowrap>2026.08.15 22:58:00</td><td>512345680</td><td>gbpusd</td><td>sell</td><td>0.20</td><td>1.28400</td><td>&nbsp;</td><td>&nbsp;</td><td nowrap>2026.08.16 01:10:00</td><td>1.28550</td><td>-1.40</td><td>-0.35</td><td>-30.00</td>
+</tr>
+<tr align="right" bgcolor="#F7F7F7">
+<td nowrap>2026.08.05 00:00:00</td><td>512345681</td><td>&nbsp;</td><td>balance</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>500.00</td>
+</tr>
+<tr align="right"><td colspan="12"><b>Commission:</b></td><td><b>-11.90</b></td></tr>
+<tr align="right"><td colspan="12"><b>Swap:</b></td><td><b>-1.55</b></td></tr>
+<tr align="right"><td colspan="12"><b>Profit:</b></td><td><b>1&nbsp;395.00</b></td></tr>
+<tr><td colspan="13">&nbsp;</td></tr>
+
+<tr align="center" bgcolor="#E5E5E5"><td colspan="13"><b>Orders</b></td></tr>
+<tr align="center" bgcolor="#E5E5E5">
+<td>Open Time</td><td>Order</td><td>Symbol</td><td>Type</td><td>Volume</td><td>Price</td><td>S / L</td><td>T / P</td><td>Time</td><td>State</td><td>Comment</td>
+</tr>
+<tr align="right" bgcolor="#FFFFFF">
+<td nowrap>2026.08.01 09:15:22</td><td>612345678</td><td>eurusd</td><td>buy</td><td>0.50 / 0.50</td><td>1.09120</td><td>1.08900</td><td>1.09600</td><td nowrap>2026.08.01 09:15:22</td><td>filled</td><td>&nbsp;</td>
+</tr>
+<tr><td colspan="13">&nbsp;</td></tr>
+
+<tr align="center" bgcolor="#E5E5E5"><td colspan="13"><b>Deals</b></td></tr>
+<tr align="center" bgcolor="#E5E5E5">
+<td>Time</td><td>Deal</td><td>Symbol</td><td>Type</td><td>Direction</td><td>Volume</td><td>Price</td><td>Order</td><td>Commission</td><td>Fee</td><td>Swap</td><td>Profit</td><td>Balance</td>
+</tr>
+<tr align="right" bgcolor="#FFFFFF">
+<td nowrap>2026.08.01 09:15:22</td><td>712345678</td><td>eurusd</td><td>buy</td><td>in</td><td>0.50</td><td>1.09120</td><td>612345678</td><td>-3.50</td><td>0.00</td><td>0.00</td><td>0.00</td><td>10&nbsp;000.00</td>
+</tr>
+<tr align="right" bgcolor="#F7F7F7">
+<td nowrap>2026.08.01 11:42:07</td><td>712345679</td><td>eurusd</td><td>sell</td><td>out</td><td>0.50</td><td>1.09480</td><td>612345679</td><td>0.00</td><td>0.00</td><td>-1.20</td><td>180.00</td><td>10&nbsp;175.30</td>
+</tr>
+</table>
+</div>
+</body>
+</html>

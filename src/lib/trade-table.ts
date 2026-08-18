@@ -18,7 +18,7 @@ export type TradeRow = {
   created_at: string;
   /** Where the row came from: 'manual' (Add Trade form) or 'mt5' (auto-sync). */
   source: 'manual' | 'mt5' | 'ctrader' | 'tradelocker' | string;
-  /** Broker's own id for the trade (MT5 closing-deal ticket). Dedup anchor. */
+  /** Broker's own id for the trade (MT5 position id). Dedup anchor. */
   external_id: string | null;
   /** Broker account the trade was imported from. Null for manual rows. */
   account_login: string | null;
