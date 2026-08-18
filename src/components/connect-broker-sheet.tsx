@@ -39,15 +39,30 @@ import { useThemedStyles } from '@/lib/styles';
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from '@/lib/supabase';
 import type { TradeRow } from '@/lib/trade-table';
 
-/** The manual steps, in the order MetaTrader wants them. */
+/**
+ * The manual steps, in the order MetaTrader wants them.
+ *
+ * Steps 1, 2 and 3 exist because of a real failure, not caution. The first setup
+ * on a machine here logged `backfilling 90 days (0 deals to scan)` and then
+ * `0 sent, 0 failed`, which reads like a clean import — the advisor had been
+ * attached in the same second the terminal switched accounts, before the broker
+ * connection was up. MetaTrader re-downloads trade history on connect and keeps
+ * none of it on disk, so there was genuinely nothing to read. Confirming the
+ * history is visible *before* attaching turns a silent non-import into a step you
+ * cannot pass by accident.
+ */
 const STEPS = [
   {
     title: 'Install MetaTrader 5 on a PC and sign in',
-    body: 'Same broker, same login you trade from. Once it connects, your history is already there — you do not have to keep the PC on afterwards.',
+    body: 'Same broker, same login you trade from. Wait until your broker name and balance actually appear — MetaTrader downloads your history when it connects, and an advisor started before that sees none of it. You do not have to keep the PC on afterwards.',
+  },
+  {
+    title: 'Check your history is there',
+    body: 'Toolbox at the bottom → History tab → right-click → set the period to All. Your closed trades should be listed. If this is empty there is nothing to import yet, and no amount of setup will change that.',
   },
   {
     title: `Drop ${EA_FILE_NAME} into MQL5\\Experts`,
-    body: 'In MetaTrader: File → Open Data Folder, then the MQL5\\Experts folder. Open it in MetaEditor and press F7 to compile — expect 0 errors.',
+    body: 'In MetaTrader: File → Open Data Folder, then the MQL5\\Experts folder. Open it in MetaEditor and press F7 to compile — expect 0 errors. If an older SkkuJournalSync is in there, remove it from any chart: it predates private journals and can no longer write.',
   },
   {
     title: 'Allow the app to reach your journal',
@@ -55,11 +70,11 @@ const STEPS = [
   },
   {
     title: 'Drag it onto any chart',
-    body: 'Which chart does not matter — it reads the whole account. Tick "Allow Algo Trading" on the Common tab, then fill in the four inputs below on the Inputs tab.',
+    body: 'Which chart does not matter — it reads the whole account. Tick "Allow Algo Trading" on the Common tab, then fill in the four inputs below on the Inputs tab. Leave DryRun on for the first run and nothing is written.',
   },
   {
     title: 'Watch the Experts tab',
-    body: 'It prints what it did: signed in, how many trades it found, how many it sent. A smiley face on the chart means it is running.',
+    body: 'It prints what it did: signed in, how many trades it found, how many it sent. A dry run says how many it would have sent — set DryRun to false and drag it on again to import them for real. A smiley face on the chart means it is running.',
   },
 ];
 
@@ -140,7 +155,12 @@ export function ConnectBrokerSheet({ visible, onClose, trades, live }: ConnectBr
       </View>
 
       <View>
-        <SectionHeader title="Five steps, once" subtitle="Fifteen minutes, and then never again." />
+        {/* Counted from the list rather than written out, so adding a step
+            cannot leave the heading claiming a number that is no longer true. */}
+        <SectionHeader
+          title={`${STEPS.length} steps, once`}
+          subtitle="Fifteen minutes, and then never again."
+        />
         <Card>
           {STEPS.map((step, index) => (
             <View key={step.title}>
