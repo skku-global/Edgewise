@@ -30,6 +30,12 @@ export type StatsTrade = {
   created_at: string;
   pl: number;
   moods: string[];
+  /**
+   * Broker costs, signed, when the row carries them. Optional because manual
+   * rows have none and most callers of this module predate them.
+   */
+  commission?: number | null;
+  swap?: number | null;
 };
 
 export type StreakKind = 'win' | 'loss' | 'none';
@@ -72,6 +78,21 @@ export type CoreStats = {
   longestLossStreak: number;
   /** The run still in progress at the newest trade. */
   currentStreak: { kind: StreakKind; length: number };
+  /**
+   * Commission + swap summed across every trade that reported them, signed —
+   * so normally negative. This is the number that answers "how much of my edge
+   * went to the broker", which no other stat here can show.
+   */
+  totalCosts: number;
+  /**
+   * `netPl` with costs added back: what the strategy made before fees.
+   *
+   * Equals `netPl` when no trade carries costs, so a journal of hand-typed
+   * trades reports the same figure twice rather than an invented gross.
+   */
+  grossPl: number;
+  /** How many trades actually reported costs, so the UI can omit the section. */
+  tradesWithCosts: number;
 };
 
 /** Oldest first. Most metrics below are order-dependent and assume this. */
@@ -101,6 +122,9 @@ export const EMPTY_STATS: CoreStats = {
   longestWinStreak: 0,
   longestLossStreak: 0,
   currentStreak: { kind: 'none', length: 0 },
+  totalCosts: 0,
+  grossPl: 0,
+  tradesWithCosts: 0,
 };
 
 export function computeStats(trades: StatsTrade[]): CoreStats {
@@ -129,8 +153,23 @@ export function computeStats(trades: StatsTrade[]): CoreStats {
   let streakKind: StreakKind = 'none';
   let streakLength = 0;
 
+  // Costs ride along in the same pass. Counted separately from the P/L totals
+  // because `pl` is already net of them — this only decomposes it.
+  let totalCosts = 0;
+  let tradesWithCosts = 0;
+
   for (const trade of ordered) {
     const { pl } = trade;
+
+    const commission = trade.commission ?? 0;
+    const swap = trade.swap ?? 0;
+    if (
+      (trade.commission !== null && trade.commission !== undefined) ||
+      (trade.swap !== null && trade.swap !== undefined)
+    ) {
+      totalCosts += commission + swap;
+      tradesWithCosts += 1;
+    }
 
     if (pl > 0) {
       wins += 1;
@@ -189,6 +228,11 @@ export function computeStats(trades: StatsTrade[]): CoreStats {
     longestWinStreak,
     longestLossStreak,
     currentStreak: { kind: streakKind, length: streakLength },
+    totalCosts,
+    // Costs are signed, so removing them from a net figure is a subtraction —
+    // the same direction as `tradeCosts` in trade-math.ts.
+    grossPl: netPl - totalCosts,
+    tradesWithCosts,
   };
 }
 

@@ -25,6 +25,17 @@ export type TradeRow = {
   /** Real open and close times for imported trades. Null for manual rows. */
   opened_at: string | null;
   closed_at: string | null;
+  /**
+   * Broker costs, as the broker signs them — normally negative. Null on manual
+   * rows, and on synced rows from a report that carried no such column.
+   *
+   * `profit_loss` on an imported row is already NET of both (see the note in
+   * scripts/add-broker-sync.sql), so these are here to *decompose* that figure,
+   * never to be subtracted from it again. `tradeCosts` in trade-math.ts is the
+   * only thing that should do that arithmetic.
+   */
+  commission: number | null;
+  swap: number | null;
   /** Effective P/L, stored or derived (see trade-math). */
   pl: number;
   moods: string[];
@@ -51,8 +62,9 @@ export type SortKey = 'date' | 'pl';
 export const BASE_TRADE_COLUMNS =
   'id, pair, direction, entry_price, exit_price, size, setup_type, notes, profit_loss, created_at';
 
-/** Provenance and real broker timestamps — added by scripts/add-broker-sync.sql. */
-export const SYNC_TRADE_COLUMNS = 'source, external_id, account_login, opened_at, closed_at';
+/** Provenance, real broker timestamps and costs — added by scripts/add-broker-sync.sql. */
+export const SYNC_TRADE_COLUMNS =
+  'source, external_id, account_login, opened_at, closed_at, commission, swap';
 
 /** Everything a `TradeRow` needs. Requires the broker-sync migration. */
 export const FULL_TRADE_COLUMNS = `${BASE_TRADE_COLUMNS}, ${SYNC_TRADE_COLUMNS}`;

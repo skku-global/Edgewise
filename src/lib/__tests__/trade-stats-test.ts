@@ -238,3 +238,46 @@ describe('buildDailySeries', () => {
     expect(buildDailySeries([])).toEqual([]);
   });
 });
+
+describe('computeStats — broker costs', () => {
+  it('sums costs and adds them back to reach gross', () => {
+    // Two trades netting 16 between them, having paid 3 in costs. The strategy
+    // therefore made 19 before fees.
+    const stats = computeStats([
+      t(10, { commission: -2, swap: -0.5 }),
+      t(6, { commission: -0.5, swap: 0 }),
+    ]);
+
+    expect(stats.netPl).toBe(16);
+    expect(stats.totalCosts).toBeCloseTo(-3);
+    expect(stats.grossPl).toBeCloseTo(19);
+    expect(stats.tradesWithCosts).toBe(2);
+  });
+
+  it('leaves gross equal to net when no trade reports costs', () => {
+    // The manual-journal case. Inventing a different gross here would imply
+    // fees that were never recorded.
+    const stats = computeStats([t(10), t(-4)]);
+
+    expect(stats.totalCosts).toBe(0);
+    expect(stats.grossPl).toBe(stats.netPl);
+    expect(stats.tradesWithCosts).toBe(0);
+  });
+
+  it('counts only the trades that actually reported costs', () => {
+    // A journal mixing imported and hand-typed rows: the total must not treat
+    // the manual row's absent columns as a zero-fee trade.
+    const stats = computeStats([t(10, { commission: -2 }), t(5)]);
+
+    expect(stats.tradesWithCosts).toBe(1);
+    expect(stats.totalCosts).toBe(-2);
+    expect(stats.grossPl).toBe(17);
+  });
+
+  it('nets a paying carry against charged commission', () => {
+    const stats = computeStats([t(10, { commission: -3, swap: 5 })]);
+
+    expect(stats.totalCosts).toBe(2);
+    expect(stats.grossPl).toBe(8);
+  });
+});

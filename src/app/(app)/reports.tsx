@@ -145,6 +145,38 @@ export default function ReportsScreen() {
     },
   ];
 
+  /**
+   * The fee drag, shown only when the broker actually reported it.
+   *
+   * Gross sits above net rather than replacing it: net is the figure every other
+   * screen quotes, and this section exists to explain that number, not to
+   * compete with it. On a hand-typed journal `tradesWithCosts` is 0 and the
+   * whole section is omitted — printing "costs: 0.00" would assert the trades
+   * were free rather than admitting they were never recorded.
+   */
+  const costRows: RiskRow[] = [
+    {
+      label: 'Gross P/L',
+      value: formatSigned(stats.grossPl),
+      tone: toneFor(stats.grossPl),
+      note: 'before commission and swap',
+    },
+    {
+      label: 'Commission and swap',
+      value: formatSigned(stats.totalCosts),
+      tone: stats.totalCosts < 0 ? 'loss' : stats.totalCosts > 0 ? 'gain' : 'text',
+      note: `across ${stats.tradesWithCosts} ${
+        stats.tradesWithCosts === 1 ? 'trade' : 'trades'
+      } that reported costs`,
+    },
+    {
+      label: 'Net P/L',
+      value: formatSigned(stats.netPl),
+      tone: toneFor(stats.netPl),
+      note: 'what actually hit the account',
+    },
+  ];
+
   return (
     <Screen refreshing={refreshing} onRefresh={refresh}>
       <ScreenHeader
@@ -238,6 +270,23 @@ export default function ReportsScreen() {
               ))}
             </Card>
           </View>
+
+          {/* Only for a journal that has imported trades. A hand-typed history
+              has no costs to decompose, and an empty section would read as a
+              missing feature rather than absent data. */}
+          {stats.tradesWithCosts > 0 ? (
+            <View>
+              <SectionHeader
+                title="Costs"
+                subtitle="How much of the edge went to the broker."
+              />
+              <Card>
+                {costRows.map((row, index) => (
+                  <RiskLine key={row.label} row={row} last={index === costRows.length - 1} />
+                ))}
+              </Card>
+            </View>
+          ) : null}
 
           <BreakdownCard
             title="By pair"

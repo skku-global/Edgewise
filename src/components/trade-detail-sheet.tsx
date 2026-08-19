@@ -21,6 +21,7 @@ import type { Theme } from '@/constants/theme';
 import { formatFullDate, formatPrice, formatSigned } from '@/lib/format';
 import { displaySetup } from '@/lib/setup-types';
 import { useThemedStyles } from '@/lib/styles';
+import { tradeCosts } from '@/lib/trade-math';
 import type { TradeRow } from '@/lib/trade-table';
 import { isImported } from '@/lib/untagged';
 
@@ -84,6 +85,8 @@ export function TradeDetailSheet({ trade, onClose }: TradeDetailSheetProps) {
   const held =
     trade?.opened_at && trade?.closed_at ? holdTime(trade.opened_at, trade.closed_at) : null;
 
+  const costs = trade ? tradeCosts(trade) : null;
+
   return (
     <Sheet
       visible={trade !== null}
@@ -122,6 +125,44 @@ export function TradeDetailSheet({ trade, onClose }: TradeDetailSheetProps) {
               <DetailRow label="Setup" value={displaySetup(trade.setup_type)} />
             </Card>
           </View>
+
+          {/* Costs sit directly under Execution, because they are the gap
+              between the prices above and the headline P/L at the top. Only
+              rendered when the broker actually reported them — see tradeCosts. */}
+          {costs?.hasCosts ? (
+            <View>
+              <SectionHeader
+                title="Costs"
+                subtitle="What the market gave, and what the broker took."
+              />
+              <Card style={styles.rows}>
+                <DetailRow label="Gross P/L" value={formatSigned(costs.gross)} />
+                {trade.commission !== null ? (
+                  <DetailRow label="Commission" value={formatSigned(costs.commission)} />
+                ) : null}
+                {trade.swap !== null ? (
+                  <DetailRow label="Swap" value={formatSigned(costs.swap)} />
+                ) : null}
+                <DetailRow label="Net P/L" value={formatSigned(costs.net)} />
+
+                {/* The one reading worth spelling out. A trade that was green on
+                    the chart and red in the account is the single most useful
+                    thing this breakdown can tell someone, and it is invisible
+                    when only the net figure is shown. */}
+                {costs.gross > 0 && costs.net < 0 ? (
+                  <ThemedText variant="caption" tone="loss">
+                    This trade was profitable on the chart and became a loss after costs.
+                  </ThemedText>
+                ) : costs.total !== 0 ? (
+                  <ThemedText variant="caption" tone="textTertiary">
+                    {costs.total < 0
+                      ? `Costs took ${formatPrice(Math.abs(costs.total))} off this trade.`
+                      : `Carry added ${formatPrice(costs.total)} to this trade.`}
+                  </ThemedText>
+                ) : null}
+              </Card>
+            </View>
+          ) : null}
 
           {/* Imported trades carry facts a typed row cannot: which account they
               came from and how long the position was actually held. */}

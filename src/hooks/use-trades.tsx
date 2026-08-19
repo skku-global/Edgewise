@@ -102,6 +102,8 @@ type RawTrade = {
   account_login: string | null;
   opened_at: string | null;
   closed_at: string | null;
+  commission: number | null;
+  swap: number | null;
 };
 
 type RawMood = {

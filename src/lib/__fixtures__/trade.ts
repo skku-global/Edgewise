@@ -1,8 +1,8 @@
 /**
  * Trade builder for the pure-library tests.
  *
- * `TradeRow` has eighteen fields and a given test cares about two of them, so
- * spelling out the other sixteen in every case would bury the assertion in
+ * `TradeRow` has twenty fields and a given test cares about two of them, so
+ * spelling out the other eighteen in every case would bury the assertion in
  * scaffolding. Overrides are shallow-merged over a plausible winning manual
  * trade.
  *
@@ -32,6 +32,11 @@ export function makeTrade(overrides: Partial<TradeRow> = {}): TradeRow {
     account_login: null,
     opened_at: null,
     closed_at: null,
+    // Null rather than 0: a manual row has no broker costs at all, and 0 would
+    // claim the broker reported "no commission" — which `tradeCosts` treats as
+    // a real figure worth showing a breakdown for.
+    commission: null,
+    swap: null,
     pl: 0,
     moods: [],
     motion_flag: null,
