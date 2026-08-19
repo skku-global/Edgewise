@@ -14,6 +14,7 @@ import { useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { AddTradeSheet } from '@/components/add-trade-sheet';
+import { ImportReportSheet } from '@/components/import-report-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { TradeDetailSheet } from '@/components/trade-detail-sheet';
 import { Button } from '@/components/ui/button';
@@ -60,6 +61,7 @@ export default function TradesScreen() {
   const [filters, setFilters] = useState<TableFilters>(DEFAULT_FILTERS);
   const [selected, setSelected] = useState<TradeRow | null>(null);
   const [addVisible, setAddVisible] = useState(false);
+  const [importVisible, setImportVisible] = useState(false);
 
   /**
    * Classify a synced trade straight from its row.
@@ -118,7 +120,20 @@ export default function TradesScreen() {
       <ScreenHeader
         title="Trades"
         subtitle="Every trade you have logged, with the mood you were in when you took it."
-        action={<Button label="Add" size="sm" onPress={() => setAddVisible(true)} />}
+        // Import sits beside Add rather than in a nav item of its own: five
+        // tabs was already the limit, and this belongs next to the thing it
+        // is an alternative to.
+        action={
+          <View style={styles.headerActions}>
+            <Button
+              label="Import"
+              variant="ghost"
+              size="sm"
+              onPress={() => setImportVisible(true)}
+            />
+            <Button label="Add" size="sm" onPress={() => setAddVisible(true)} />
+          </View>
+        }
       />
 
       <View style={styles.filterRow}>
@@ -152,8 +167,20 @@ export default function TradesScreen() {
       ) : trades.length === 0 ? (
         <EmptyState
           title="No trades yet"
-          body="Log your first trade, or connect MetaTrader 5 to have them sync themselves."
-          action={<Button label="Add a trade" onPress={() => setAddVisible(true)} />}
+          body="Log your first trade, or import the history you already have from a MetaTrader report."
+          // Someone with an empty table and years of trades behind them is
+          // exactly who the import is for, so it is offered here as loudly as
+          // typing one in by hand.
+          action={
+            <View style={styles.emptyActions}>
+              <Button label="Add a trade" onPress={() => setAddVisible(true)} />
+              <Button
+                label="Import a report"
+                variant="secondary"
+                onPress={() => setImportVisible(true)}
+              />
+            </View>
+          }
         />
       ) : (
         <Card style={styles.tableCard}>
@@ -216,6 +243,12 @@ export default function TradesScreen() {
 
       <AddTradeSheet visible={addVisible} onClose={() => setAddVisible(false)} onSaved={refresh} />
       <TradeDetailSheet trade={selected} onClose={() => setSelected(null)} />
+      <ImportReportSheet
+        visible={importVisible}
+        onClose={() => setImportVisible(false)}
+        trades={trades}
+        onImported={refresh}
+      />
     </Screen>
   );
 }
@@ -351,6 +384,24 @@ function TableRow({
 
 const sheet = (t: Theme) =>
   StyleSheet.create({
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.space.two,
+    },
+    /**
+     * The empty state's pair of buttons, which are full-size rather than the
+     * header's `sm`. Two of those exceed a 320px-wide phone side by side, so
+     * this wraps and centres instead of letting the second one overflow the
+     * card. The header row above is left alone: two `sm` buttons fit.
+     */
+    emptyActions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: t.space.two,
+    },
     filterRow: {
       flexDirection: 'row',
       gap: t.space.two,

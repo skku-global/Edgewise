@@ -12,6 +12,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { EquityCurve } from '@/components/charts/equity-curve';
 import { ConnectBrokerSheet } from '@/components/connect-broker-sheet';
+import { ImportReportSheet } from '@/components/import-report-sheet';
 import { TagTradeSheet } from '@/components/tag-trade-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { TradeDetailSheet } from '@/components/trade-detail-sheet';
@@ -42,6 +43,7 @@ export default function DashboardScreen() {
   const [selected, setSelected] = useState<TradeRow | null>(null);
   const [tagVisible, setTagVisible] = useState(false);
   const [connectVisible, setConnectVisible] = useState(false);
+  const [importVisible, setImportVisible] = useState(false);
 
   const series = useMemo(() => buildEquitySeries(trades), [trades]);
   const sync = useMemo(() => syncStatus(trades), [trades]);
@@ -231,6 +233,18 @@ export default function DashboardScreen() {
         onClose={() => setConnectVisible(false)}
         trades={trades}
         live={live}
+        // One closes before the other opens. Two modals on screen at once is
+        // a native problem rather than a layout one.
+        onImportInstead={() => {
+          setConnectVisible(false);
+          setImportVisible(true);
+        }}
+      />
+      <ImportReportSheet
+        visible={importVisible}
+        onClose={() => setImportVisible(false)}
+        trades={trades}
+        onImported={refresh}
       />
     </Screen>
   );

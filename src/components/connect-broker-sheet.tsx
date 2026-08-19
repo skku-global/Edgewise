@@ -85,9 +85,23 @@ export type ConnectBrokerSheetProps = {
   trades: TradeRow[];
   /** Whether the app's realtime channel is connected. */
   live: boolean;
+  /**
+   * Opens the report importer, closing this sheet first.
+   *
+   * Handled by the caller rather than rendered here because two stacked
+   * modals is a native problem, not a layout one. Optional so this sheet
+   * still stands alone.
+   */
+  onImportInstead?: () => void;
 };
 
-export function ConnectBrokerSheet({ visible, onClose, trades, live }: ConnectBrokerSheetProps) {
+export function ConnectBrokerSheet({
+  visible,
+  onClose,
+  trades,
+  live,
+  onImportInstead,
+}: ConnectBrokerSheetProps) {
   const styles = useThemedStyles(sheet);
   const { user } = useSession();
 
@@ -153,6 +167,31 @@ export function ConnectBrokerSheet({ visible, onClose, trades, live }: ConnectBr
           ))}
         </Card>
       </View>
+
+      {/* Offered before the steps, not after them. Someone who is going to
+          bounce off a fifteen-minute setup does so while reading it, and by
+          then a way out at the bottom is too late to be found. */}
+      {onImportInstead ? (
+        <View>
+          <SectionHeader
+            title="Want your old trades now?"
+            subtitle="The steps below set up everything from here on. They do not go back."
+          />
+          <Card style={styles.prose}>
+            <ThemedText variant="body" tone="textSecondary">
+              MetaTrader will export the history it already holds as a file, and this app
+              can read it — no advisor, no whitelisted URL, no password. It is one shot
+              rather than ongoing, so most people do both: import what you have now, and
+              set the advisor up for everything after.
+            </ThemedText>
+            <Button
+              label="Import a report instead"
+              variant="secondary"
+              onPress={onImportInstead}
+            />
+          </Card>
+        </View>
+      ) : null}
 
       <View>
         {/* Counted from the list rather than written out, so adding a step
