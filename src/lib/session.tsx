@@ -43,24 +43,33 @@ import {
 } from 'react';
 import { Platform } from 'react-native';
 
+import { describeAuthError, UnconfirmedEmailError } from '@/lib/auth-errors';
 import { describeAuthLinkError, hasAuthPayload, parseAuthFragment } from '@/lib/auth-link';
-import { initialAuthHash, supabase } from '@/lib/supabase';
+import { SUPABASE_URL, initialAuthHash, supabase } from '@/lib/supabase';
 
 /** What a verb returns: a human-readable problem, or null on success. */
 export type AuthResult = { error: string | null; message?: string };
 
 /**
- * The one error message a screen needs to recognise rather than just display.
- *
- * "Email not confirmed" is the only failure with a remedy the app can offer
- * directly — resend the link — so the sign-in screen has to be able to tell it
- * apart from the others. Comparing against this constant keeps that check
- * anchored to the string produced below; matching on Supabase's own wording
- * would put a copy of their message in a screen, where a rephrasing upstream
- * silently removes the resend button.
+ * Re-exported so screens keep importing it from the provider they already use.
+ * It is defined next to the mapping that produces it, in `lib/auth-errors.ts`.
  */
-export const UnconfirmedEmailError =
-  'Confirm your email address first — check your inbox for the link.';
+export { UnconfirmedEmailError };
+
+/**
+ * Host this client is pointed at, named in the unreachable-backend message.
+ *
+ * `createClient` has already accepted the URL by the time this module loads, so
+ * the parse is expected to succeed; the fallback is here so a malformed value
+ * degrades to a vaguer message rather than throwing while building one.
+ */
+const backendHost = (() => {
+  try {
+    return new URL(SUPABASE_URL).host;
+  } catch {
+    return undefined;
+  }
+})();
 
 type SessionValue = {
   session: Session | null;
@@ -130,55 +139,14 @@ function linkBackTo(path: string): string {
 }
 
 /**
- * Supabase error messages are written for developers. These are the ones a user
- * can actually hit, rephrased into something they can act on; anything else
- * falls through to the original text rather than being flattened into a useless
- * "something went wrong".
+ * Maps a Supabase auth error to what a screen shows.
+ *
+ * The mapping itself is `lib/auth-errors.ts`. This wrapper exists only to bind
+ * the host, so the unreachable-backend case can name what it failed to reach —
+ * bound once here rather than threaded through every call site below.
  */
 function describe(error: AuthError): string {
-  const status = error.status ?? 0;
-  const raw = error.message.toLowerCase();
-
-  // The built-in email server only delivers to addresses belonging to the
-  // Supabase organisation that owns the project. Everything else is refused
-  // with this, and the raw message gives no hint why — so it gets the longest
-  // rewrite in the file, because without it the failure is unguessable.
-  if (raw.includes('not authorized') && raw.includes('email')) {
-    return 'Supabase will not email that address. Its built-in mail server only sends to your own organisation members — use the address on your Supabase account, add custom SMTP, or turn off email confirmation while developing.';
-  }
-  if (raw.includes('over_email_send_rate_limit') || raw.includes('email rate limit')) {
-    return 'Email limit reached. The built-in mail server allows only a couple of messages an hour — wait, or set up custom SMTP.';
-  }
-  // Supabase's own wording here is "For security purposes, you can only request
-  // this after N seconds", which reads as a fault rather than a cooldown.
-  if (raw.includes('only request this after') || raw.includes('for security purposes')) {
-    return 'Just a moment — another email was sent very recently. Try again shortly.';
-  }
-  if (status === 429 || raw.includes('rate limit')) {
-    return 'Too many attempts. Wait a couple of minutes and try again.';
-  }
-  if (raw.includes('invalid login credentials')) {
-    return 'That email and password combination does not match an account.';
-  }
-  if (raw.includes('email not confirmed')) {
-    return UnconfirmedEmailError;
-  }
-  if (raw.includes('already registered') || raw.includes('already been registered')) {
-    return 'An account already exists for that email. Sign in instead.';
-  }
-  if (raw.includes('should be different from the old password')) {
-    return 'That is already your password. Choose a different one.';
-  }
-  if (raw.includes('password should be at least')) {
-    // Server-side policy, which can be stricter than the client's minimum.
-    return error.message;
-  }
-  // What `updateUser` returns when the recovery session has already lapsed.
-  if (raw.includes('auth session missing') || raw.includes('session_not_found')) {
-    return 'Your reset link has expired. Request a new one and try again.';
-  }
-
-  return error.message;
+  return describeAuthError(error, backendHost);
 }
 
 export function SessionProvider({ children }: PropsWithChildren) {

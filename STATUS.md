@@ -427,3 +427,107 @@ own Experts folder, so only the source is worth tracking.
 5. **Rotate the two credentials** used on 2026-08-17 (the Supabase PAT and the
    Resend API key). Both were pasted into a chat transcript. Neither was written
    to `.env` or committed.
+
+## The backend stopped resolving — 2026-09-01
+
+**This gates every numbered item in "What is left" above.** The app cannot reach
+Supabase, so nothing that touches the database can be tested, including the EA.
+
+The symptom was a browser console holding roughly thirty
+`net::ERR_NAME_NOT_RESOLVED` lines against
+`nqwtetjrzoaggaerriew.supabase.co/auth/v1/token?grant_type=refresh_token`, plus
+one on `/auth/v1/signup`, and an `AuthRetryableFetchError: Failed to fetch`.
+
+**It is DNS, not the app, and not this machine.** Queried against `8.8.8.8` so the
+local resolver is out of the picture:
+
+```
+supabase.co                      -> 76.76.21.21   resolves
+nqwtetjrzoaggaerriew.supabase.co -> NXDOMAIN      no record at all
+db.nqwtetjrzoaggaerriew...       -> NXDOMAIN
+```
+
+A random invented ref returns NXDOMAIN too, so **the zone has no wildcard** —
+which means a paused project and a deleted one are indistinguishable from
+outside. Only the dashboard can tell them apart.
+
+**Paused is by far the likelier of the two.** That ref was provably live on
+2026-08-17: `verify-rls.mjs` ran 10/10 against it, and the SQL migrations
+returned 201. Free-tier projects pause after about a week idle and 15 days had
+passed. Worth knowing for next time: **a paused Supabase project loses its DNS
+record entirely**, so it fails at name resolution rather than returning an HTTP
+error — which is why this reads as "no internet" rather than "project paused",
+and why the first instinct is to blame the network.
+
+### Why one dead host produced thirty errors
+
+`supabase-js` **does not clear a stored session when a refresh fails with a
+retryable fetch error** — only on a real auth error. `_callRefreshToken` returns
+`{ session: null, error }` and deliberately skips `_removeSession()` when
+`isAuthRetryableFetchError` is true, on the reasoning that a network blip should
+not sign anyone out. With a permanently dead host that reasoning inverts: the
+stale `localStorage` token is retried about ten times per `autoRefreshToken`
+tick, and again on every `visibilitychange`, indefinitely. Clearing site data for
+the origin silences it immediately.
+
+### What was fixed here
+
+**The app said "Failed to fetch."** `describe()` had no network branch, so the
+raw platform wording reached the user — the least useful thing to show someone
+whose password was in fact correct. There is now a first branch, ahead of every
+other check, because a dead backend otherwise imitates all of them: a sign-in
+that never left the browser is not a credential problem.
+
+The mapping moved to **`src/lib/auth-errors.ts`**. It was previously a private
+function inside `session.tsx`, which is why it had no tests while `auth-link.ts`
+— the same kind of pure string helper — has fifteen. `session.tsx` keeps a
+four-line wrapper that binds the host, so the message can name what it failed to
+reach; `UnconfirmedEmailError` moved with it and is re-exported, so `login.tsx`
+is untouched.
+
+Detection keys on `AuthRetryableFetchError` **paired with status 0**, which is
+what supabase-js sets when `fetch` itself throws. The message is not a reliable
+signal on its own — Chrome says "Failed to fetch", Safari "Load failed", Firefox
+"NetworkError when attempting to fetch resource", React Native "Network request
+failed" — so all four are covered as a secondary net, and each is asserted in the
+tests. A retryable error that *does* carry a status (a 503) is deliberately kept
+separate: something answered, and said to come back later.
+
+`src/lib/__tests__/auth-errors-test.ts` adds 15 tests, five of which exist purely
+to prove the new first-position branch does **not** swallow bad credentials, the
+unconfirmed-email constant, the mailer refusal, or a 429.
+
+Suite: **248/248 across 15 suites**. `tsc --noEmit` clean, `eslint` clean on all
+three files.
+
+### A second, unrelated bug found on the way — `.env.local` beats `.env`
+
+Verified in `node_modules/@expo/env/build/index.js`, whose own comment reads
+*"Iterate over each dotenv file in lowest prio to highest prio order"*: the list
+is `[.env.local, .env]` highest-first, then reversed and overwritten key by key.
+**`.env.local` wins.** The startup line `env: load .env.local .env` is the tell.
+
+`.env.local` held `EXPO_PUBLIC_CLAUDE_API_KEY=your_claude_api_key_here`. Since
+`claude-client.ts` decides the Chat tab is configured on `.trim() !== ""`, a
+placeholder counted as a real key: the tab skipped its own setup explanation and
+called the API, failing with a 401 instead. Now blank.
+
+**This corrects "Chat — `EXPO_PUBLIC_CLAUDE_API_KEY` is still empty" above**,
+which was read off `.env` alone and was therefore true of the wrong file.
+
+### When a working URL exists, it goes in four places
+
+1. `.env`
+2. `.env.local` — **and this one wins**, so editing `.env` alone changes nothing
+3. Repo secret `EXPO_PUBLIC_SUPABASE_URL`, plus the anon key
+4. Restart Metro with `--clear`; env vars are read at bundle time
+
+On (3): `488c9a0` made both values **defaults in `deploy.yml`**, so the published
+site at `skku-global.github.io/Edgewise` is pointed at the dead ref too and is
+broken in the same way until the project is restored under the same ref or a repo
+secret overrides it. A secret of the same name still wins — that is the intended
+rotation path, and it is the only one that does not require a commit.
+
+Nothing in `src/` hardcodes the ref: `lib/supabase.ts` is env-only by design and
+throws at import when unset. The only other copy is inside the committed `dist/`
+bundle from the last export.
