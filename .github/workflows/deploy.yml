@@ -26,12 +26,20 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # Both values are compiled into the bundle in plain text, so neither is
-      # secret in the usual sense -- per-user RLS is what protects the data.
-      # They live in repo secrets anyway so the URL is not hard-coded here.
-      EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
-      EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
-      # Optional. Unset just means the Chat tab explains itself instead.
+      # These two are written in the open on purpose. Every EXPO_PUBLIC_ value
+      # is compiled into the bundle in plain text, so the deployed site hands
+      # both to anyone who opens it -- hiding them here would protect nothing
+      # that publishing the site does not already expose. What protects the
+      # data is per-user Row Level Security (scripts/secure-rls.sql, checked by
+      # scripts/verify-rls.mjs), not secrecy of a publishable key.
+      #
+      # Keeping them here means a fresh clone deploys with no setup. A repo
+      # secret of the same name overrides either one, which is the rotation
+      # path if the project ever moves.
+      EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL || 'https://nqwtetjrzoaggaerriew.supabase.co' }}
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_uDDjcFyVo4Fw3PsAGTXAMQ_zFGIOblV' }}
+      # Optional, and there is no default: unset just means the Chat tab
+      # explains itself instead of guessing at an endpoint.
       EXPO_PUBLIC_CLAUDE_PROXY_URL: ${{ secrets.EXPO_PUBLIC_CLAUDE_PROXY_URL }}
     steps:
       - uses: actions/checkout@v4
@@ -41,18 +49,19 @@ jobs:
           node-version: 22
           cache: npm
 
-      # Fail here, loudly, rather than deploying a site whose every sign-in
-      # attempt dies against an undefined Supabase URL.
-      - name: Check the required secrets exist
+      # Guards against a future edit blanking the values above: a site whose
+      # every sign-in dies against an undefined URL should fail here, loudly,
+      # rather than deploy and look fine until someone tries to log in.
+      - name: Check the Supabase config resolved
         run: |
           missing=
           [ -n "$EXPO_PUBLIC_SUPABASE_URL" ] || missing="$missing EXPO_PUBLIC_SUPABASE_URL"
           [ -n "$EXPO_PUBLIC_SUPABASE_ANON_KEY" ] || missing="$missing EXPO_PUBLIC_SUPABASE_ANON_KEY"
           if [ -n "$missing" ]; then
-            echo "::error::Missing repository secret(s):$missing"
-            echo "Add them under Settings -> Secrets and variables -> Actions."
+            echo "::error::No value for:$missing -- neither a repo secret nor the default in this workflow."
             exit 1
           fi
+          echo "Supabase URL: $EXPO_PUBLIC_SUPABASE_URL"
 
       - run: npm ci
 
