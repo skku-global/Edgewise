@@ -16,6 +16,7 @@ import { supabase } from '@/lib/supabase';
 
 jest.mock('@/lib/supabase', () => ({
   SUPABASE_URL: 'https://nqwtetjrzoaggaerriew.supabase.co',
+  BACKEND_HOST: 'nqwtetjrzoaggaerriew.supabase.co',
   initialAuthHash: '',
   supabase: {
     auth: {

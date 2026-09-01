@@ -51,7 +51,12 @@ import {
 } from '@/lib/auth-errors';
 import { isBackendReachable } from '@/lib/backend-reachable';
 import { describeAuthLinkError, hasAuthPayload, parseAuthFragment } from '@/lib/auth-link';
-import { SUPABASE_URL, initialAuthHash, supabase } from '@/lib/supabase';
+import {
+  BACKEND_HOST as backendHost,
+  SUPABASE_URL,
+  initialAuthHash,
+  supabase,
+} from '@/lib/supabase';
 
 /** What a verb returns: a human-readable problem, or null on success. */
 export type AuthResult = { error: string | null; message?: string };
@@ -61,21 +66,6 @@ export type AuthResult = { error: string | null; message?: string };
  * It is defined next to the mapping that produces it, in `lib/auth-errors.ts`.
  */
 export { UnconfirmedEmailError };
-
-/**
- * Host this client is pointed at, named in the unreachable-backend message.
- *
- * `createClient` has already accepted the URL by the time this module loads, so
- * the parse is expected to succeed; the fallback is here so a malformed value
- * degrades to a vaguer message rather than throwing while building one.
- */
-const backendHost = (() => {
-  try {
-    return new URL(SUPABASE_URL).host;
-  } catch {
-    return undefined;
-  }
-})();
 
 /**
  * How often the stopped ticker is re-asserted while the backend is unreachable.

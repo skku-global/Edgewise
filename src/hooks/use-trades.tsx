@@ -47,6 +47,7 @@ import {
 } from 'react';
 import { AppState } from 'react-native';
 
+import { describeLoadError } from '@/lib/load-errors';
 import { supabase } from '@/lib/supabase';
 import { effectiveProfitLoss, hasStoredProfitLoss } from '@/lib/trade-math';
 import { FULL_TRADE_COLUMNS, type TradeRow } from '@/lib/trade-table';
@@ -132,31 +133,6 @@ export type UseTradesResult = {
 };
 
 const TRADE_COLUMNS = FULL_TRADE_COLUMNS;
-
-/**
- * Turn a load failure into something the reader can act on.
- *
- * A generic message was fine while the schema was fixed, but the columns above
- * now include ones added by a migration the user runs by hand
- * (`scripts/add-broker-sync.sql`). Until that runs, this SELECT fails with
- * Postgres 42703 and every screen behind this hook — dashboard, trades table,
- * calendar — shows the same dead end, with nothing to say that one paste into
- * the SQL editor is the entire fix.
- *
- * Naming the file in the message is deliberate: this is the failure a new
- * checkout hits first, and the person reading it is the person who can fix it.
- */
-function describeLoadError(err: unknown): string {
-  const code = (err as { code?: string } | null)?.code;
-
-  // 42703 undefined_column — migration not run yet.
-  // 42P01 undefined_table — pointed at a project with no `trades` table at all.
-  if (code === '42703' || code === '42P01') {
-    return 'Your database is missing the broker-sync columns. Run scripts/add-broker-sync.sql in the Supabase SQL editor, then pull to refresh.';
-  }
-
-  return 'Unable to load your trades right now.';
-}
 
 const TradesContext = createContext<UseTradesResult | null>(null);
 

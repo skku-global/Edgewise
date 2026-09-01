@@ -43,12 +43,23 @@ export const UnconfirmedEmailError =
  * Status 0 means nothing answered — a dead hostname, no network, or a blocked
  * request — and no amount of retrying fixes those.
  */
-export function isUnreachableAuthError(error: AuthError): boolean {
-  const raw = error.message.toLowerCase();
-
-  if (error.name === 'AuthRetryableFetchError' && (error.status ?? 0) === 0) {
-    return true;
-  }
+/**
+ * Whether a message is a runtime saying the request never completed, as opposed
+ * to a server saying no.
+ *
+ * Outside auth this is the *only* signal available. postgrest-js deliberately
+ * leaves `code` and `hint` empty for client-side network failures — its own
+ * comment reads "those fields are meant for upstream service errors" — so a
+ * dead host arrives carrying nothing but text.
+ *
+ * Each platform words it differently, and all four are matched because the app
+ * runs on all of them: Chrome "Failed to fetch", Safari "Load failed", Firefox
+ * "NetworkError when attempting to fetch resource", React Native "Network
+ * request failed". These are substring tests rather than equality because
+ * postgrest-js prefixes the error name, yielding "TypeError: Failed to fetch".
+ */
+export function isUnreachableMessage(message: string): boolean {
+  const raw = message.toLowerCase();
 
   return (
     raw.includes('failed to fetch') ||
@@ -56,6 +67,17 @@ export function isUnreachableAuthError(error: AuthError): boolean {
     raw.includes('networkerror') ||
     raw.includes('load failed')
   );
+}
+
+export function isUnreachableAuthError(error: AuthError): boolean {
+  // supabase-js sets status 0 when `fetch` itself throws, which is a stronger
+  // signal than any wording. A retryable error that *does* carry a status is a
+  // server asking us to come back later, and is not this.
+  if (error.name === 'AuthRetryableFetchError' && (error.status ?? 0) === 0) {
+    return true;
+  }
+
+  return isUnreachableMessage(error.message);
 }
 
 /**

@@ -89,4 +89,21 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
  * user's trades from another's is the policies, not the key.
  */
 export const SUPABASE_URL = supabaseUrl;
+
+/**
+ * Just the host, for messages that name what could not be reached.
+ *
+ * Lives here rather than in each consumer because two of them now need it: the
+ * auth screens and the trade loader. `createClient` has already accepted the
+ * URL above, so the parse is expected to succeed; the fallback exists so a
+ * malformed value degrades to a vaguer message rather than throwing while
+ * building one.
+ */
+export const BACKEND_HOST = (() => {
+  try {
+    return new URL(supabaseUrl).host;
+  } catch {
+    return undefined;
+  }
+})();
 export const SUPABASE_PUBLISHABLE_KEY = supabaseAnonKey;
