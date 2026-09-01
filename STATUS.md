@@ -531,3 +531,82 @@ rotation path, and it is the only one that does not require a commit.
 Nothing in `src/` hardcodes the ref: `lib/supabase.ts` is env-only by design and
 throws at import when unset. The only other copy is inside the committed `dist/`
 bundle from the last export.
+
+## The outage message nobody saw — 2026-09-01, commit `34bc244`
+
+`c49c01f` wrote the message. This makes it reachable, and stops the console noise
+that made the page feel broken in a different way.
+
+### The message only fired if you submitted the form
+
+`getSession()` **makes no network request in either common cold-load case.** With
+nothing in storage `__loadSession` returns `{session: null, error: null}` outright;
+a stored token still inside its expiry window is returned as-is. Both paths are
+silent, so a first-time visitor to the published site got an ordinary, working-looking
+sign-in screen and learned nothing until they typed a password and pressed the button.
+
+The stale-token path *is* covered — `__loadSession` returns the retryable error
+rather than throwing, once `accessTokenStillValid` fails — which is exactly the
+path this machine was on, and why the message did appear here. That made the gap
+invisible from the one browser it was tested in.
+
+`src/lib/backend-reachable.ts` asks the host directly, on the signed-out path only.
+
+**Any answer counts as reachable.** 401, 404, 500 — all of them prove DNS
+resolved, which is the whole question. The bar is deliberately this low because
+the message accuses the user's project of being paused or deleted; a false
+positive is expensive and a false negative merely returns you to the old
+behaviour.
+
+**Two traps, both recorded in the file, because correct code looks like an
+oversight here:**
+
+1. The probe is `mode: 'no-cors'` so a CORS policy cannot be reported as an
+   outage.
+2. It therefore must **never inspect the response.** An opaque response reports
+   `status: 0` even from a perfectly healthy host — verified live against
+   `supabase.co`. Any `r.ok` or `status === 200` check would declare every
+   backend on earth unreachable.
+
+### Why the console held thirty errors, and what is achievable
+
+Documented above as "about ten times per tick". The actual figure: `retryable`
+sleeps `200 * 2^(attempt-1)` and keeps going while the next backoff still fits
+inside `AUTO_REFRESH_TICK_DURATION_MS` (30s), so **each tick costs about eight
+requests** — forever, since the session is never cleared on a retryable failure.
+
+Stopping the ticker once does not hold. **`_onVisibilityChanged` calls
+`_startAutoRefresh()` itself on every tab focus**, so a single `stopAutoRefresh()`
+survives until the first tab switch and no further. The stop is re-asserted on a
+20s interval that touches no network.
+
+Recovery is driven by `AppState` rather than a timer: a timer would have to make
+a request to learn anything, reintroducing the noise this removes. `AppState`
+works on both platforms — react-native-web maps it onto document visibility.
+
+**Two bursts survive and cannot be reached from outside the library:** one on
+load, from `_recoverAndRefresh()` inside `_initialize()`, which runs before any
+React code mounts, and one per tab focus from that same visibility handler. So
+the honest end state is **~8 on load, ~8 per focus, and 0 in between**, against
+~8 every 30s indefinitely. The repetition is what goes away.
+
+The teardown **has** to call `startAutoRefresh()`. Leaving the ticker stopped
+would mean no token refreshed again for the rest of the session — a far quieter
+bug than the one being fixed, and a worse one.
+
+### The test exists because both failure modes are invisible
+
+A ticker that quietly restarts puts the storm back with nobody the wiser; a
+ticker that never restarts kills refreshes silently. Neither shows up in any
+other check, so `session-backend-test.tsx` pins both, plus a re-probe on
+foreground that stays quiet while the host is still down.
+
+It hung `jest` for eight minutes on the first run: the mounted provider was never
+unmounted, so its 20s re-assert interval held the worker open. Teardown in
+`afterEach` fixes it — worth knowing, because a leaked interval in a provider
+test reads as a slow suite rather than a bug. (`--forceExit` prints its
+open-handle warning whenever the flag is set, so that line is not evidence of
+anything; the single file now exits on its own in 4.5s.)
+
+Suite: **286/286 across 17 suites**, up from 248/15. `tsc --noEmit` clean,
+`eslint` clean.
