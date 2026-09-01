@@ -26,6 +26,12 @@ if (Platform.OS !== "web") {
  * Throwing at import is the right failure. Metro surfaces the message directly,
  * and a missing config is not something to limp along with — every screen is a
  * database read.
+ *
+ * The message covers both places it can fire, because it fires in two very
+ * different ones. Under `web.output: "static"` Expo Router evaluates this module
+ * inside the export, so on a CI runner this throw ends the build — and advice to
+ * "restart the dev server" is useless there, since there is no dev server and no
+ * `.env` to copy anything into. The host's own environment is the only fix.
  */
 const supabaseUrl = (process.env.EXPO_PUBLIC_SUPABASE_URL ?? "").trim();
 const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "").trim();
@@ -36,10 +42,19 @@ if (!supabaseUrl || !supabaseAnonKey) {
   ].filter(Boolean);
 
   throw new Error(
-    `Supabase is not configured — ${missing.join(" and ")} missing. ` +
-      `Copy .env.example to .env and fill in the Project URL and publishable key ` +
-      `from Supabase → Project Settings → API, then restart the dev server ` +
-      `(env vars are read at bundle time, so a reload is not enough).`,
+    [
+      `Supabase is not configured — ${missing.join(" and ")} missing.`,
+
+      `Locally: copy .env.example to .env and fill in the Project URL and ` +
+        `publishable key from Supabase → Project Settings → API, then restart ` +
+        `the dev server — env vars are read at bundle time, so a reload is not ` +
+        `enough. Note that .env.local, if you have one, takes priority over .env.`,
+
+      `On a deploy: set both as environment variables on the host itself — ` +
+        `Vercel project settings, or a GitHub Actions repo secret. Under static ` +
+        `rendering this module is evaluated at build time, which is why the ` +
+        `build fails here rather than the page failing later.`,
+    ].join("\n\n"),
   );
 }
 
