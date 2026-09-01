@@ -73,6 +73,11 @@ jobs:
 
       - run: npm ci
 
+      # typecheck regenerates expo-env.d.ts first, via package.json's
+      # pretypecheck hook. tsconfig includes that file, but Expo generates
+      # it and it is gitignored, so a fresh checkout does not have it --
+      # and without it tsc loses Expo's ambient types and every Node
+      # import in the tests. It is why runs 1-4 failed here.
       - run: npm run typecheck
       - run: npm test -- --ci
       - run: npx expo export --platform web
