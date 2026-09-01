@@ -25,7 +25,15 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # expo export has been seen to finish its work and then not exit. Without a
+    # cap that hangs until the six-hour default, burning runner minutes on a
+    # build that is already done.
+    timeout-minutes: 20
     env:
+      # Pages serves from /Edgewise, so the bundle must be built with that
+      # prefix. app.config.js reads this; unset means root, which is what the
+      # dev server and Vercel need.
+      EXPO_WEB_BASE_URL: /Edgewise
       # These two are written in the open on purpose. Every EXPO_PUBLIC_ value
       # is compiled into the bundle in plain text, so the deployed site hands
       # both to anyone who opens it -- hiding them here would protect nothing
@@ -82,6 +90,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
