@@ -1,0 +1,81 @@
+# Builds the web export and publishes it to GitHub Pages on every push to main.
+#
+# Expo's own guide publishes a `gh-pages` branch from your laptop via the
+# gh-pages package. This does it on a runner instead, for two reasons: the
+# 2.4 MB of build output never lands in the repo, and nobody has to remember
+# to run a deploy script for the live site to match main.
+name: Deploy website
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, and never cancel one midway: a half-uploaded artifact
+# would take the site down rather than just delay the update.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Both values are compiled into the bundle in plain text, so neither is
+      # secret in the usual sense -- per-user RLS is what protects the data.
+      # They live in repo secrets anyway so the URL is not hard-coded here.
+      EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+      # Optional. Unset just means the Chat tab explains itself instead.
+      EXPO_PUBLIC_CLAUDE_PROXY_URL: ${{ secrets.EXPO_PUBLIC_CLAUDE_PROXY_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Fail here, loudly, rather than deploying a site whose every sign-in
+      # attempt dies against an undefined Supabase URL.
+      - name: Check the required secrets exist
+        run: |
+          missing=
+          [ -n "$EXPO_PUBLIC_SUPABASE_URL" ] || missing="$missing EXPO_PUBLIC_SUPABASE_URL"
+          [ -n "$EXPO_PUBLIC_SUPABASE_ANON_KEY" ] || missing="$missing EXPO_PUBLIC_SUPABASE_ANON_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing"
+            echo "Add them under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm test -- --ci
+      - run: npx expo export --platform web
+
+      # enablement turns Pages on the first time this runs, so the site does
+      # not need a click in Settings before it can go live.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
