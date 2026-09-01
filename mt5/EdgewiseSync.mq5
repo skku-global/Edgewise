@@ -604,7 +604,7 @@ string BuildTradeJson(const TradeRecord &record)
    // silently written.
    json += "\"user_id\":\""      + g_user_id + "\",";
 
-   json += "\"pair\":\""        + JsonEscape(record.symbol) + "\",";
+   json += "\"pair\":\""        + JsonEscape(Upper(record.symbol)) + "\",";
    json += "\"direction\":\""   + record.direction + "\",";
    json += "\"entry_price\":"   + DoubleToString(record.entry_price, record.digits) + ",";
    json += "\"exit_price\":"    + DoubleToString(record.exit_price, record.digits) + ",";
@@ -740,6 +740,22 @@ string JsonEscape(const string value)
    StringReplace(out, "\"", "\\\"");
 
    return(out);
+}
+
+//+------------------------------------------------------------------+
+//| The journal stores pairs upper-cased: the report importer and the |
+//| Add trade form both do it. The EA has to agree, or one instrument |
+//| reaches the briefing under two spellings and Claude reads it as   |
+//| two.                                                              |
+//|                                                                  |
+//| Only the outgoing JSON is folded. record.symbol keeps the broker  |
+//| casing, which SymbolInfoInteger needs to resolve digits.          |
+//+------------------------------------------------------------------+
+string Upper(const string text)
+{
+   string copy = text;
+   StringToUpper(copy);
+   return(copy);
 }
 
 //+------------------------------------------------------------------+
