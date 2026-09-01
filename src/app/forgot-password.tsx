@@ -38,7 +38,7 @@ import { useThemedStyles } from '@/lib/styles';
 const ResendCooldown = 45;
 
 export default function ForgotPasswordScreen() {
-  const { requestPasswordReset, linkError, clearLinkError } = useSession();
+  const { requestPasswordReset, linkError, clearLinkError, backendError } = useSession();
   const styles = useThemedStyles(sheet);
 
   const [email, setEmail] = useState('');
@@ -52,8 +52,9 @@ export default function ForgotPasswordScreen() {
   const cooldown = useCooldown(ResendCooldown);
 
   // Someone who arrived here from a dead link deserves to see why before being
-  // asked to type their address again.
-  const error = linkError ?? formError;
+  // asked to type their address again — and someone whose backend is down needs
+  // that first, since no address they type can produce an email.
+  const error = backendError ?? linkError ?? formError;
 
   const submit = async () => {
     if (submitting || cooldown.active) return;

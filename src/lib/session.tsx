@@ -41,9 +41,15 @@ import {
   useState,
   type PropsWithChildren,
 } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 
-import { describeAuthError, UnconfirmedEmailError } from '@/lib/auth-errors';
+import {
+  describeAuthError,
+  describeUnreachableBackend,
+  isUnreachableAuthError,
+  UnconfirmedEmailError,
+} from '@/lib/auth-errors';
+import { isBackendReachable } from '@/lib/backend-reachable';
 import { describeAuthLinkError, hasAuthPayload, parseAuthFragment } from '@/lib/auth-link';
 import { SUPABASE_URL, initialAuthHash, supabase } from '@/lib/supabase';
 
@@ -71,6 +77,18 @@ const backendHost = (() => {
   }
 })();
 
+/**
+ * How often the stopped ticker is re-asserted while the backend is unreachable.
+ *
+ * Not a poll: this fires no request and prints nothing. It exists because
+ * `stopAutoRefresh()` does not stay stopped — supabase-js calls
+ * `_startAutoRefresh()` itself from its own `visibilitychange` handler every time
+ * the tab becomes visible, so a single stop survives only until the first tab
+ * switch. Comfortably under the library's own 30s tick so a restarted ticker is
+ * caught before it fires.
+ */
+const ReassertStoppedRefreshMs = 20_000;
+
 type SessionValue = {
   session: Session | null;
   user: User | null;
@@ -88,6 +106,20 @@ type SessionValue = {
    */
   linkError: string | null;
   clearLinkError: () => void;
+  /**
+   * Nothing is answering at the backend's address.
+   *
+   * Separate from `linkError` because it is a different kind of fact. A link
+   * error is about one thing the user just did and is dismissible; this is the
+   * whole app being unable to function, it is nobody's mistake, and there is no
+   * version of dismissing it that helps — hiding it would leave a sign-in screen
+   * that fails for no stated reason, which is exactly what this replaced.
+   *
+   * Set on mount, and only while signed out: the screens that display it are the
+   * auth screens. Someone holding a still-valid stored token is on their way
+   * into the app instead, where a dead backend surfaces as failing reads.
+   */
+  backendError: string | null;
   signIn: (email: string, password: string) => Promise<AuthResult>;
   signUp: (input: SignUpInput) => Promise<AuthResult>;
   signOut: () => Promise<void>;
@@ -154,16 +186,40 @@ export function SessionProvider({ children }: PropsWithChildren) {
   const [isLoading, setIsLoading] = useState(true);
   const [isRecovering, setIsRecovering] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
+  const [backendError, setBackendError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
 
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(({ data, error }) => {
       if (!active) {
         return;
       }
       setSession(data.session);
       setIsLoading(false);
+
+      // A stored token that expired *and* could not be refreshed. supabase-js
+      // made a real request here, so its verdict beats a probe of our own.
+      if (error && isUnreachableAuthError(error)) {
+        setBackendError(describeUnreachableBackend(backendHost));
+        return;
+      }
+
+      // Signed in from storage. Not proof the backend is up — a token inside its
+      // expiry window is returned without any request — but this user is headed
+      // for the app, not for a screen that shows this message.
+      if (data.session) {
+        return;
+      }
+
+      // Signed out, and nothing above touched the network. Without this the
+      // sign-in screen looks completely normal until someone submits it.
+      isBackendReachable(SUPABASE_URL).then((reachable) => {
+        if (!active || reachable) {
+          return;
+        }
+        setBackendError(describeUnreachableBackend(backendHost));
+      });
     });
 
     // Fires for sign-in, sign-out, token refresh and the email-link handoff on
@@ -178,6 +234,12 @@ export function SessionProvider({ children }: PropsWithChildren) {
       if (event === 'SIGNED_OUT') {
         setIsRecovering(false);
       }
+      // Neither of these can happen without the server answering, so an earlier
+      // verdict that it was unreachable is now provably stale. Deliberately not
+      // INITIAL_SESSION, which is satisfied from storage and proves nothing.
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        setBackendError(null);
+      }
     });
 
     return () => {
@@ -185,6 +247,88 @@ export function SessionProvider({ children }: PropsWithChildren) {
       data.subscription.unsubscribe();
     };
   }, []);
+
+  /**
+   * While the backend is unreachable, stop trying to refresh against it.
+   *
+   * -------------------------------------------------------------------------
+   * WHAT THE CONSOLE STORM ACTUALLY IS
+   * -------------------------------------------------------------------------
+   * supabase-js does not clear a stored session when a refresh fails
+   * *retryably*, and a dead hostname is retryable by its reckoning. So the
+   * stale token stays on disk and gets attempted forever. Each attempt is not
+   * one request either: `_refreshAccessToken` wraps the call in exponential
+   * backoff — 200ms, 400, 800, 1600, … — and keeps going while the next delay
+   * still fits inside the 30s tick, which is roughly eight requests per burst.
+   * A 30s ticker then does it again, and again.
+   *
+   * None of that retrying can succeed. A hostname that does not resolve does
+   * not resolve harder on the ninth attempt, so the whole exercise buys nothing
+   * and costs a console no one can read past.
+   *
+   * -------------------------------------------------------------------------
+   * WHAT IS AND IS NOT FIXABLE FROM OUT HERE
+   * -------------------------------------------------------------------------
+   * The first burst is not. `_recoverAndRefresh()` runs from the client's own
+   * `_initialize()`, before any of this mounts, and a tab focus triggers another
+   * — both are the library restoring an expired session against a host that is
+   * not answering, and neither is reachable from outside it. What is fixable is
+   * the repetition, which is the part that never ends.
+   *
+   * Recovery is deliberately driven by the app becoming active rather than by a
+   * timer. A timer would have to make a request to learn anything, which would
+   * put back a slice of the noise this effect exists to remove — and returning
+   * to the app is both the likelier moment for the backend to have come back
+   * (the user just went and restored it) and the only moment anyone is there to
+   * see the result. `AppState` covers both platforms: react-native-web maps it
+   * onto document visibility.
+   */
+  useEffect(() => {
+    if (!backendError) {
+      return;
+    }
+
+    let active = true;
+
+    void supabase.auth.stopAutoRefresh();
+
+    const reassert = setInterval(() => {
+      void supabase.auth.stopAutoRefresh();
+    }, ReassertStoppedRefreshMs);
+
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (!active || state !== 'active') {
+        return;
+      }
+
+      isBackendReachable(SUPABASE_URL).then(async (reachable) => {
+        if (!active || !reachable) {
+          return;
+        }
+
+        // Answering again. Let supabase-js re-read the session — which either
+        // refreshes cleanly, or fails non-retryably and signs the user out,
+        // both of which are correct and neither of which is ours to decide.
+        await supabase.auth.getSession();
+
+        if (active) {
+          setBackendError(null);
+        }
+      });
+    });
+
+    return () => {
+      active = false;
+      clearInterval(reassert);
+      subscription.remove();
+
+      // Whatever cleared the error — the probe above, or a sign-in that proved
+      // the host answers — the ticker has to come back on. Leaving it stopped
+      // would mean no token refreshed again for the rest of the session, which
+      // is a far quieter bug than the one being fixed and a much worse one.
+      void supabase.auth.startAutoRefresh();
+    };
+  }, [backendError]);
 
   /**
    * Web: read the fragment that was on the page at load.
@@ -368,6 +512,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
       isRecovering,
       linkError,
       clearLinkError,
+      backendError,
       signIn,
       signUp,
       signOut,
@@ -382,6 +527,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
       isRecovering,
       linkError,
       clearLinkError,
+      backendError,
       signIn,
       signUp,
       signOut,

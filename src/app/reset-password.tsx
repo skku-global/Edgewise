@@ -42,7 +42,8 @@ import { useSession } from '@/lib/session';
 import { useThemedStyles } from '@/lib/styles';
 
 export default function ResetPasswordScreen() {
-  const { updatePassword, endRecovery, linkError, clearLinkError, user } = useSession();
+  const { updatePassword, endRecovery, linkError, clearLinkError, user, backendError } =
+    useSession();
   const theme = useTheme();
   const styles = useThemedStyles(sheet);
 
@@ -57,6 +58,12 @@ export default function ResetPasswordScreen() {
 
   const passwordInput = useRef<TextInput>(null);
   const confirmInput = useRef<TextInput>(null);
+
+  // Shown in place of a form error, not as its own screen. The "that link did
+  // not work" state below would be a lie here: a refused link is Supabase
+  // answering, and this is Supabase not answering at all. The form stays live —
+  // submitting it just reports the same thing a second time.
+  const error = backendError ?? formError;
 
   const strength = useMemo(() => passwordStrength(password), [password]);
 
@@ -166,7 +173,7 @@ export default function ResetPasswordScreen() {
         </ThemedText>
       </View>
 
-      {formError ? <Banner tone="error" message={formError} /> : null}
+      {error ? <Banner tone="error" message={error} /> : null}
 
       <View style={styles.form}>
         <View>

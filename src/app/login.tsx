@@ -106,7 +106,8 @@ function validate(mode: Mode, values: Record<FieldName, string>): FieldErrors {
 }
 
 export default function LoginScreen() {
-  const { signIn, signUp, resendConfirmation, linkError, clearLinkError } = useSession();
+  const { signIn, signUp, resendConfirmation, linkError, clearLinkError, backendError } =
+    useSession();
   const router = useRouter();
   const theme = useTheme();
   const styles = useThemedStyles(sheet);
@@ -146,7 +147,12 @@ export default function LoginScreen() {
   // A dead email link lands here, because the guards send a session-less user to
   // this screen. It outranks a form error: it explains why they are looking at a
   // sign-in page they did not ask for.
-  const error = linkError ?? formError;
+  //
+  // An unreachable backend outranks both, and is the only one of the three that
+  // is on screen before anybody touches the form. Nothing answering is the cause
+  // of every other failure this screen can report, so showing a narrower message
+  // over the top of it would just be describing a symptom.
+  const error = backendError ?? linkError ?? formError;
 
   const switchMode = (next: Mode) => {
     if (next === mode) return;
@@ -280,7 +286,10 @@ export default function LoginScreen() {
           tone="error"
           message={error}
           action={
-            awaitingConfirmation ? (
+            // Nothing to offer when the server is not answering: resending a
+            // confirmation and requesting a fresh link both go to the host that
+            // just failed to respond.
+            backendError ? null : awaitingConfirmation ? (
               resendButton
             ) : linkError ? (
               <Button

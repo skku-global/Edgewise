@@ -1,6 +1,11 @@
 import { AuthApiError, AuthRetryableFetchError } from '@supabase/supabase-js';
 
-import { UnconfirmedEmailError, describeAuthError } from '@/lib/auth-errors';
+import {
+  UnconfirmedEmailError,
+  describeAuthError,
+  describeUnreachableBackend,
+  isUnreachableAuthError,
+} from '@/lib/auth-errors';
 
 /**
  * The wording each platform uses when `fetch` itself fails. supabase-js passes
@@ -102,5 +107,71 @@ describe('describeAuthError — the network branch does not swallow the rest', (
     const result = describeAuthError(new AuthApiError('Something quite specific', 400, undefined));
 
     expect(result).toBe('Something quite specific');
+  });
+});
+
+/**
+ * The predicate and the message are exported separately because the reachability
+ * probe reaches the same conclusion without an `AuthError` to hand. These tests
+ * hold the two producers to the same wording — if they drift, one outage reads as
+ * two different problems depending on whether the visitor had signed in here
+ * before.
+ */
+describe('isUnreachableAuthError', () => {
+  it.each(fetchFailures)('is true for %s wording', (_platform, message) => {
+    expect(isUnreachableAuthError(new AuthRetryableFetchError(message, 0))).toBe(true);
+  });
+
+  it('is true on status 0 whatever the message says', () => {
+    expect(isUnreachableAuthError(new AuthRetryableFetchError('something else entirely', 0))).toBe(
+      true,
+    );
+  });
+
+  // Something answered. Retrying is the right advice, and it is a different
+  // message, so this must not be swallowed by the unreachable branch.
+  it('is false for a retryable error that carries a status', () => {
+    expect(isUnreachableAuthError(new AuthRetryableFetchError('Service Unavailable', 503))).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    ['bad credentials', new AuthApiError('Invalid login credentials', 400, undefined)],
+    ['unconfirmed email', new AuthApiError('Email not confirmed', 400, undefined)],
+    ['a rate limit', new AuthApiError('too many requests', 429, undefined)],
+  ])('is false for %s', (_label, error) => {
+    expect(isUnreachableAuthError(error)).toBe(false);
+  });
+});
+
+describe('describeUnreachableBackend', () => {
+  it('says the same thing describeAuthError says, so one outage reads one way', () => {
+    const viaError = describeAuthError(
+      new AuthRetryableFetchError('Failed to fetch', 0),
+      'nqwtetjrzoaggaerriew.supabase.co',
+    );
+
+    expect(describeUnreachableBackend('nqwtetjrzoaggaerriew.supabase.co')).toBe(viaError);
+  });
+
+  it('names the host when it has one', () => {
+    expect(describeUnreachableBackend('example.supabase.co')).toContain('at example.supabase.co');
+  });
+
+  it('still reads as a sentence without one', () => {
+    const result = describeUnreachableBackend();
+
+    expect(result).toContain('Cannot reach the Edgewise backend.');
+    expect(result).not.toContain(' at undefined');
+  });
+
+  // The two things this message exists to do: stop the user blaming their
+  // password, and point at the one place that can actually settle it.
+  it('rules out the credentials and names the dashboard', () => {
+    const result = describeUnreachableBackend('example.supabase.co');
+
+    expect(result).toContain('not your email or password');
+    expect(result).toContain('Supabase dashboard');
   });
 });

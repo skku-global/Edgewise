@@ -43,8 +43,10 @@ export const UnconfirmedEmailError =
  * Status 0 means nothing answered — a dead hostname, no network, or a blocked
  * request — and no amount of retrying fixes those.
  */
-function isUnreachable(error: AuthError, status: number, raw: string): boolean {
-  if (error.name === 'AuthRetryableFetchError' && status === 0) {
+export function isUnreachableAuthError(error: AuthError): boolean {
+  const raw = error.message.toLowerCase();
+
+  if (error.name === 'AuthRetryableFetchError' && (error.status ?? 0) === 0) {
     return true;
   }
 
@@ -53,6 +55,29 @@ function isUnreachable(error: AuthError, status: number, raw: string): boolean {
     raw.includes('network request failed') ||
     raw.includes('networkerror') ||
     raw.includes('load failed')
+  );
+}
+
+/**
+ * What to say when nothing answered.
+ *
+ * Exported on its own because there are two ways to learn this, and they must
+ * say the same thing. A sign-in attempt learns it from an `AuthError`; a cold
+ * page load learns it from a reachability probe, because a visitor with no
+ * stored session never makes a request for supabase-js to fail — see
+ * `lib/backend-reachable.ts`. If the probe wrote its own wording, the same
+ * outage would read as two different problems depending on whether you happened
+ * to have logged in here before.
+ */
+export function describeUnreachableBackend(backendHost?: string): string {
+  const where = backendHost ? ` at ${backendHost}` : '';
+
+  return (
+    `Cannot reach the Edgewise backend${where}. Nothing answered, so this is ` +
+    `not your email or password. Either this device is offline, or the ` +
+    `Supabase project is paused or has been deleted — a paused free-tier ` +
+    `project stops resolving entirely, which looks exactly like being offline. ` +
+    `Check the project is running in the Supabase dashboard.`
   );
 }
 
@@ -73,16 +98,8 @@ export function describeAuthError(error: AuthError, backendHost?: string): strin
   // a side effect — a sign-in that cannot reach the server is not a credential
   // problem, and telling someone their password is wrong when the request never
   // left the browser is the most expensive wrong answer here.
-  if (isUnreachable(error, status, raw)) {
-    const where = backendHost ? ` at ${backendHost}` : '';
-
-    return (
-      `Cannot reach the Edgewise backend${where}. Nothing answered, so this is ` +
-      `not your email or password. Either this device is offline, or the ` +
-      `Supabase project is paused or has been deleted — a paused free-tier ` +
-      `project stops resolving entirely, which looks exactly like being offline. ` +
-      `Check the project is running in the Supabase dashboard.`
-    );
+  if (isUnreachableAuthError(error)) {
+    return describeUnreachableBackend(backendHost);
   }
   // A retryable error that did carry a status is the opposite case: something
   // answered, and said to come back shortly.
