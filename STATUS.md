@@ -515,12 +515,13 @@ called the API, failing with a 401 instead. Now blank.
 **This corrects "Chat — `EXPO_PUBLIC_CLAUDE_API_KEY` is still empty" above**,
 which was read off `.env` alone and was therefore true of the wrong file.
 
-### When a working URL exists, it goes in four places
+### When a working URL exists, it goes in five places
 
 1. `.env`
 2. `.env.local` — **and this one wins**, so editing `.env` alone changes nothing
 3. Repo secret `EXPO_PUBLIC_SUPABASE_URL`, plus the anon key
-4. Restart Metro with `--clear`; env vars are read at bundle time
+4. `.env.production`, committed — the default a Vercel build reads
+5. Restart Metro with `--clear`; env vars are read at bundle time
 
 On (3): `488c9a0` made both values **defaults in `deploy.yml`**, so the published
 site at `skku-global.github.io/Edgewise` is pointed at the dead ref too and is
@@ -610,3 +611,74 @@ anything; the single file now exits on its own in 4.5s.)
 
 Suite: **286/286 across 17 suites**, up from 248/15. `tsc --noEmit` clean,
 `eslint` clean.
+
+## The Vercel build had no credentials at all — 2026-09-02
+
+`expo export -p web` failed on Vercel at `src/lib/supabase.ts:38`, the
+module-scope throw, with both env vars reported missing. The stack ran
+`session.tsx:54` → `account-button.tsx:24` → `app-tabs.web.tsx:26` →
+`(app)/_layout.tsx:11`, then `Command "expo export -p web" exited with 1`.
+
+Three facts explain it, and only together:
+
+1. **`vercel.json` carries no env.** It has `buildCommand`, `outputDirectory`,
+   `devCommand`, `framework`, `cleanUrls` — nothing else. The current property
+   table for `vercel.json` no longer lists `build` or `env`, so the old
+   `build.env` route is legacy; dashboard variables are the supported path.
+2. **`deploy.yml`'s defaults are invisible to Vercel.** GitHub Actions env and
+   Vercel env are separate systems. The two values committed at `deploy.yml:47`
+   only ever reached the Pages build.
+3. **Static rendering evaluates this module at build time.** That is why the
+   *build* died instead of a page failing at runtime — the throw ran on the
+   runner, inside `expo export`, with no browser involved.
+
+So the deploy had never been configured, and nothing about the recent work
+caused it. It would have failed identically on the first push.
+
+### Why a committed `.env.production` rather than the dashboard
+
+Both work. The file was chosen because it makes a fresh clone deploy without
+anyone knowing a setup step exists, which is the same reason `488c9a0` put
+defaults in `deploy.yml`.
+
+It stays overridable. `@expo/env` states plainly that loading "won't override
+existing environment variables defined in the system environment" — a real
+variable set in Vercel's project settings beats the file, with no commit needed.
+Same default-plus-override shape as the workflow, and the same rotation path.
+
+Safe to commit for the same reason `deploy.yml` already commits them: every
+`EXPO_PUBLIC_` value is compiled into the bundle in plain text and readable by
+anyone with the app. Per-user Row Level Security is what separates one trader's
+history from another's — not secrecy of a publishable key. `.gitignore` covers
+`.env` and `.env*.local`, and neither pattern matches `.env.production`, so the
+file tracks without a `.gitignore` change and the two real local files stay out.
+
+### Proven by simulating the runner, not by pushing
+
+`.env` and `.env.local` were moved aside so the tree held exactly what a Vercel
+checkout holds — `.env.example` and `.env.production` — and the export was run to
+`--output-dir C:/tmp/sim-dist`, away from the gitignored `dist/`. Both files were
+restored in the same shell invocation, so a failed export could not leave them
+moved.
+
+It exported clean: 15 static routes, a 1.68 MB bundle, exit 0. The startup line
+read `env: load .env.production` / `env: export EXPO_PUBLIC_SUPABASE_URL
+EXPO_PUBLIC_SUPABASE_ANON_KEY`.
+
+The stronger evidence is in the bundle. Both credentials appear in it once each,
+and the string `is not configured` appears **zero** times — Expo inlines
+`process.env.EXPO_PUBLIC_*` as literals, so with both present the minifier can
+fold `missing.length` to zero and delete the whole throw. An export that merely
+skipped the throw at runtime would still carry that string. Its absence is proof
+the values were known at build time.
+
+### Two things this does not fix
+
+**`EXPO_WEB_BASE_URL` must stay unset on Vercel.** `/Edgewise` is the Pages-only
+subpath; `app.config.js:10` treats unset as serving from root, which is what
+Vercel and the dev server need. Setting it there would break every asset path.
+
+**The site will build and then show the outage banner.** The ref it points at
+stopped resolving on 2026-09-01. A green deploy is not a working app until the
+Supabase project is restored — that part is still hands-on-dashboard work, and no
+build-side change can substitute for it.
