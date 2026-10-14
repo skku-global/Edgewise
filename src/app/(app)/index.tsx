@@ -13,6 +13,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { EquityCurve } from '@/components/charts/equity-curve';
 import { ConnectBrokerSheet } from '@/components/connect-broker-sheet';
 import { ImportReportSheet } from '@/components/import-report-sheet';
+import { JournalHomeCard } from '@/components/journal-home-card';
 import { TagTradeSheet } from '@/components/tag-trade-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { TradeDetailSheet } from '@/components/trade-detail-sheet';
@@ -33,7 +34,6 @@ import { useThemedStyles } from '@/lib/styles';
 import { analyzeMoodPatterns } from '@/lib/trade-insights';
 import type { TradeRow } from '@/lib/trade-table';
 import { tagPromptLabel, untaggedTrades } from '@/lib/untagged';
-import { JournalHomeCard } from '@/components/journal-home-card';
 
 
 const RECENT_TRADE_LIMIT = 5;
