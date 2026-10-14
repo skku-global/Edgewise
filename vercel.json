@@ -1,5 +1,5 @@
 {
-  "buildCommand": "expo export -p web",
+  "buildCommand": "node -e \"if (!require('fs').existsSync('.env') && require('fs').existsSync('.env.production')) require('fs').copyFileSync('.env.production', '.env')\" && NODE_ENV=production expo export -p web",
   "outputDirectory": "dist",
   "devCommand": "expo",
   "framework": null,

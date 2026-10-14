@@ -22,7 +22,7 @@ const API_KEY = process.env.GEMINI_API_KEY;
 
 // Model names change over time. If you get a 404 "model not found", check the
 // current names in Google's docs and set GEMINI_MODEL to a valid one.
-const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+const MODEL = process.env.GEMINI_MODEL ?? "gemini-3-flash-preview";
 
 // API STEP 1 - ENDPOINT: where the request goes.
 const UPSTREAM = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
