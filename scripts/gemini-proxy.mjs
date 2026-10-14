@@ -25,7 +25,7 @@ const API_KEY = process.env.GEMINI_API_KEY;
 
 // Model names change over time. If you get a 404 "model not found", check the
 // current names in Google's docs and set GEMINI_MODEL to a valid one.
-const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+const MODEL = process.env.GEMINI_MODEL ?? "gemini-3.8-flash";
 
 // API STEP 1 - ENDPOINT: where the request goes.
 const UPSTREAM = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
@@ -34,6 +34,19 @@ const UPSTREAM = `https://generativelanguage.googleapis.com/v1beta/models/${MODE
 // request at 20 MB and base64 adds about a third, so refuse anything bigger than
 // this. A few minutes of speech is far below it.
 const MAX_AUDIO_BYTES = 12 * 1024 * 1024;
+
+// Screenshots are sent the same way (inline base64), same 20 MB request cap.
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+const EXTRACT_PROMPT =
+  "This is a screenshot from MetaTrader (a trade history list, a closed trade, or an open position). " +
+  "Read the single most recent or most prominent trade and return ONLY JSON with these keys: " +
+  '"pair" (string such as BTCUSD, or null), "direction" ("buy" or "sell", or null), ' +
+  '"entry_price" (number or null), "exit_price" (number or null), "size" (lots, number or null), ' +
+  '"profit_loss" (number, negative for a loss, or null), ' +
+  '"notes" (short string: anything unclear, and how many trades the screenshot shows). ' +
+  "Use null for anything you cannot read clearly. Never guess or invent a number.";
 
 if (!API_KEY) {
   console.error("GEMINI_API_KEY is not set.");
@@ -186,6 +199,43 @@ async function handleTranscribe(req, res) {
   sendJson(res, 200, { text });
 }
 
+/** POST /v1/extract-trade - screenshot. The request body IS the image file. */
+async function handleExtractTrade(req, res) {
+  let mime = String(req.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
+  if (mime === "image/jpg") mime = "image/jpeg";
+  if (!IMAGE_MIMES.has(mime)) {
+    sendJson(res, 400, { error: { message: `Use a PNG, JPEG or WebP screenshot (got "${mime || "none"}")` } });
+    return;
+  }
+
+  const image = await readBody(req, MAX_IMAGE_BYTES);
+  if (image.length === 0) {
+    sendJson(res, 400, { error: { message: "Empty image" } });
+    return;
+  }
+
+  const result = await callGemini({
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { text: EXTRACT_PROMPT },
+          { inline_data: { mime_type: mime, data: image.toString("base64") } },
+        ],
+      },
+    ],
+    generationConfig: { temperature: 0, responseMimeType: "application/json" },
+  });
+
+  if (!result.ok) {
+    sendJson(res, result.status, result.data);
+    return;
+  }
+
+  const text = (result.data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("").trim();
+  sendJson(res, 200, { text });
+}
+
 const server = createServer(async (req, res) => {
   cors(res);
 
@@ -199,6 +249,8 @@ const server = createServer(async (req, res) => {
       await handleChat(req, res);
     } else if (req.method === "POST" && req.url?.startsWith("/v1/transcribe")) {
       await handleTranscribe(req, res);
+    } else if (req.method === "POST" && req.url?.startsWith("/v1/extract-trade")) {
+      await handleExtractTrade(req, res);
     } else {
       sendJson(res, 404, { error: { message: "Not found" } });
     }
@@ -214,6 +266,6 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Gemini proxy on http://localhost:${PORT} (model: ${MODEL})`);
-  console.log(`Routes: POST /v1/messages (chat), POST /v1/transcribe (voice)`);
+  console.log(`Routes: POST /v1/messages (chat), POST /v1/transcribe (voice), POST /v1/extract-trade (screenshot)`);
   console.log(`Keep EXPO_PUBLIC_CLAUDE_PROXY_URL=http://localhost:${PORT}`);
 });
