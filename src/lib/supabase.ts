@@ -33,8 +33,16 @@ if (Platform.OS !== "web") {
  * "restart the dev server" is useless there, since there is no dev server and no
  * `.env` to copy anything into. The host's own environment is the only fix.
  */
-const supabaseUrl = (process.env.EXPO_PUBLIC_SUPABASE_URL ?? "").trim();
-const supabaseAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "").trim();
+const DEFAULT_SUPABASE_URL = "https://nqwtetjrzoaggaerriew.supabase.co";
+const DEFAULT_SUPABASE_ANON_KEY = "sb_publishable_uDDjcFyVo4Fw3PsAGTXAMQ_zFGIOblV";
+
+const supabaseUrl = (
+  process.env.EXPO_PUBLIC_SUPABASE_URL || DEFAULT_SUPABASE_URL
+).trim();
+const supabaseAnonKey = (
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY
+).trim();
+
 if (!supabaseUrl || !supabaseAnonKey) {
   const missing = [
     !supabaseUrl && "EXPO_PUBLIC_SUPABASE_URL",

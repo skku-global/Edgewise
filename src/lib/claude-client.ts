@@ -63,13 +63,22 @@ If there is no briefing (the user has logged no trades yet), say so and point th
 Today's date is ${new Date().toISOString().slice(0, 10)}.`;
 }
 
+export function getEffectiveProxyUrl(): string {
+  const envUrl = (process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL ?? "").trim();
+  if (envUrl) return envUrl;
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin;
+  }
+  return "";
+}
+
 /**
  * True when a usable key exists: the direct key, or a proxy configured (the
  * proxy owns its key, so this client never needs one).
  */
 export function hasClaudeKey(): boolean {
   return (
-    (process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL ?? "").trim() !== "" ||
+    getEffectiveProxyUrl() !== "" ||
     (process.env.EXPO_PUBLIC_CLAUDE_API_KEY ?? "").trim() !== ""
   );
 }
@@ -84,8 +93,7 @@ export async function askClaude(
   history: ClaudeTurn[],
 ): Promise<string> {
   const directKey = process.env.EXPO_PUBLIC_CLAUDE_API_KEY;
-  const proxyUrl = process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL;
-  const proxy = (proxyUrl ?? "").trim();
+  const proxy = getEffectiveProxyUrl();
   const key = (directKey ?? "").trim();
 
   const messages: ClaudeTurn[] = [
