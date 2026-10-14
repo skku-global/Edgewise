@@ -1,16 +1,14 @@
 /**
- * Equity curve drawn with react-native-svg — the only renderer.
+ * Equity curve drawn with react-native-svg, the only renderer.
  *
- * No async loading step, no platform split, and it server-renders cleanly under
- * `web.output: "static"`, which is most of the reason it replaced the Skia
- * version outright rather than sitting behind it as a fallback.
- *
- * Everything here is hand-computed: the domain, the projection from P/L to
- * pixels, and both `d` strings. No charting library is involved.
+ * Everything is hand-computed: the domain, the projection from P/L to pixels,
+ * and both `d` strings. On first mount the line draws in once; later data
+ * changes (live trades) update in place without replaying it. Reduce-motion
+ * skips the animation entirely.
  */
 
-import { useId, useState } from 'react';
-import { LayoutChangeEvent, StyleSheet, View } from 'react-native';
+import { useEffect, useId, useState } from 'react';
+import { AccessibilityInfo, LayoutChangeEvent, StyleSheet, View } from 'react-native';
 import Svg, { Circle, Defs, Line, LinearGradient, Path, Stop } from 'react-native-svg';
 
 import { useTheme } from '@/hooks/use-theme';
@@ -19,6 +17,48 @@ import { ChartFrame } from './chart-frame';
 import { DEFAULT_CHART_HEIGHT, type EquityCurveProps } from './types';
 
 const PADDING = { top: 14, right: 10, bottom: 14, left: 10 };
+const DRAW_MS = 800;
+
+/** 0 to 1 once, on mount, eased out. Jumps straight to 1 under reduce-motion. */
+function useDrawIn(): number {
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    let frame = 0;
+    let cancelled = false;
+
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((reduced) => {
+        if (cancelled) {
+          return;
+        }
+        if (reduced) {
+          setProgress(1);
+          return;
+        }
+        const start = Date.now();
+        const tick = () => {
+          if (cancelled) {
+            return;
+          }
+          const t = Math.min((Date.now() - start) / DRAW_MS, 1);
+          setProgress(1 - Math.pow(1 - t, 3));
+          if (t < 1) {
+            frame = requestAnimationFrame(tick);
+          }
+        };
+        frame = requestAnimationFrame(tick);
+      })
+      .catch(() => setProgress(1));
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  return progress;
+}
 
 export default function SvgEquityChart({
   points,
@@ -28,8 +68,8 @@ export default function SvgEquityChart({
 }: EquityCurveProps) {
   const theme = useTheme();
 
-  // Width comes from layout rather than a prop so the card can be any width.
-  // It is 0 during server rendering and on the first client frame.
+  // Width comes from layout so the card can be any width. It is 0 during
+  // server rendering and on the first client frame.
   const [width, setWidth] = useState(0);
 
   const onLayout = (event: LayoutChangeEvent) => {
@@ -70,50 +110,49 @@ type CurveProps = {
 };
 
 function Curve({ points, width, height, stroke, zeroLine, dotRing }: CurveProps) {
-  // SVG gradient ids are document-global, so two curves on one screen would
-  // otherwise share — and fight over — the same definition. useId is stable
-  // across server render and hydration, which a counter or random value is not.
+  // SVG gradient ids are document-global; useId is stable across server render
+  // and hydration.
   const fillId = `equity-fill-${useId()}`;
+  const progress = useDrawIn();
 
   const plotWidth = Math.max(width - PADDING.left - PADDING.right, 1);
   const plotHeight = Math.max(height - PADDING.top - PADDING.bottom, 1);
 
   const values = points.map((point) => point.equity);
-  // Always include 0 in the domain so the break-even line stays on screen and
-  // an all-profit curve doesn't look like it starts at a loss.
+  // Always include 0 so the break-even line stays on screen.
   const rawMin = Math.min(0, ...values);
   const rawMax = Math.max(0, ...values);
-  // A perfectly flat series would divide by zero; give it a 1-unit band.
   const span = rawMax - rawMin || 1;
 
-  const xAt = (index: number) =>
-    PADDING.left + (index / (points.length - 1)) * plotWidth;
-  const yAt = (value: number) =>
-    PADDING.top + (1 - (value - rawMin) / span) * plotHeight;
+  const xAt = (index: number) => PADDING.left + (index / (points.length - 1)) * plotWidth;
+  const yAt = (value: number) => PADDING.top + (1 - (value - rawMin) / span) * plotHeight;
 
   const line = points
     .map((point, index) => `${index === 0 ? 'M' : 'L'}${xAt(index).toFixed(2)},${yAt(point.equity).toFixed(2)}`)
     .join(' ');
 
   const zeroY = yAt(0);
-  // Close the area back down to the break-even line, not the bottom edge, so a
-  // losing stretch fills downward from zero rather than hanging off the axis.
   const area = `${line} L${xAt(points.length - 1).toFixed(2)},${zeroY.toFixed(2)} L${xAt(0).toFixed(2)},${zeroY.toFixed(2)} Z`;
 
+  let length = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    length += Math.hypot(xAt(i) - xAt(i - 1), yAt(points[i].equity) - yAt(points[i - 1].equity));
+  }
+  length = Math.max(length, 1);
+
+  const drawing = progress < 1;
   const lastX = xAt(points.length - 1);
   const lastY = yAt(points[points.length - 1].equity);
 
   return (
     <Svg width={width} height={height}>
       <Defs>
-        {/* Fades toward the break-even line so the fill reads as depth under the
-            curve rather than a flat block of colour. */}
         <LinearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
           <Stop offset="0" stopColor={stroke} stopOpacity={0.22} />
           <Stop offset="1" stopColor={stroke} stopOpacity={0.02} />
         </LinearGradient>
       </Defs>
-      <Path d={area} fill={`url(#${fillId})`} />
+      <Path d={area} fill={`url(#${fillId})`} opacity={progress} />
       <Line
         x1={PADDING.left}
         y1={zeroY}
@@ -123,8 +162,19 @@ function Curve({ points, width, height, stroke, zeroLine, dotRing }: CurveProps)
         strokeWidth={1}
         strokeDasharray="4 4"
       />
-      <Path d={line} stroke={stroke} strokeWidth={2} fill="none" strokeLinejoin="round" strokeLinecap="round" />
-      <Circle cx={lastX} cy={lastY} r={4} fill={stroke} stroke={dotRing} strokeWidth={2} />
+      <Path
+        d={line}
+        stroke={stroke}
+        strokeWidth={2}
+        fill="none"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        strokeDasharray={drawing ? `${length} ${length}` : undefined}
+        strokeDashoffset={drawing ? length * (1 - progress) : undefined}
+      />
+      {drawing ? null : (
+        <Circle cx={lastX} cy={lastY} r={4} fill={stroke} stroke={dotRing} strokeWidth={2} />
+      )}
     </Svg>
   );
 }
