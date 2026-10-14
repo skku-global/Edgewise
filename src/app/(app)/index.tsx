@@ -20,6 +20,7 @@ import { AccountButton } from '@/components/ui/account-button';
 import { Button } from '@/components/ui/button';
 import { Card, SectionHeader } from '@/components/ui/card';
 import { Pill } from '@/components/ui/pill';
+import { PositionBar } from '@/components/ui/position-bar';
 import { Screen, ScreenHeader } from '@/components/ui/screen';
 import { Stat, toneFor } from '@/components/ui/stat';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/state';
@@ -59,6 +60,7 @@ export default function DashboardScreen() {
   const recent = trades.slice(0, RECENT_TRADE_LIMIT);
   const derivedCount = trades.filter((trade) => trade.derived).length;
   const insight = analyzeMoodPatterns(trades);
+  const maxAbs = trades.reduce((max, trade) => Math.max(max, Math.abs(trade.pl)), 0);
 
   return (
     <Screen refreshing={refreshing} onRefresh={refresh}>
@@ -193,7 +195,7 @@ export default function DashboardScreen() {
               {recent.map((trade, index) => (
                 <View key={trade.id}>
                   {index > 0 ? <View style={styles.rowDivider} /> : null}
-                  <RecentTrade trade={trade} onPress={setSelected} />
+                  <RecentTrade trade={trade} max={maxAbs} onPress={setSelected} />
                 </View>
               ))}
             </Card>
@@ -252,9 +254,11 @@ export default function DashboardScreen() {
 
 function RecentTrade({
   trade,
+  max,
   onPress,
 }: {
   trade: TradeRow;
+  max: number;
   onPress: (trade: TradeRow) => void;
 }) {
   const styles = useThemedStyles(sheet);
@@ -273,6 +277,8 @@ function RecentTrade({
             {formatSigned(trade.pl)}
           </ThemedText>
         </View>
+
+        <PositionBar value={trade.pl} max={max} style={styles.bar} />
 
         <View style={styles.tradeMeta}>
           <Pill
@@ -356,6 +362,7 @@ const sheet = (t: Theme) =>
       justifyContent: 'space-between',
       gap: t.space.two,
     },
+    bar: { marginVertical: 8 },
     tradeMeta: {
       flexDirection: 'row',
       flexWrap: 'wrap',
