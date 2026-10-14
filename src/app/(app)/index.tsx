@@ -33,6 +33,8 @@ import { useThemedStyles } from '@/lib/styles';
 import { analyzeMoodPatterns } from '@/lib/trade-insights';
 import type { TradeRow } from '@/lib/trade-table';
 import { tagPromptLabel, untaggedTrades } from '@/lib/untagged';
+import { JournalHomeCard } from '@/components/journal-home-card';
+
 
 const RECENT_TRADE_LIMIT = 5;
 
@@ -72,7 +74,9 @@ export default function DashboardScreen() {
             : `Your performance across ${trades.length} ${trades.length === 1 ? 'trade' : 'trades'}.`
         }
         action={<AccountButton />}
+
       />
+      <JournalHomeCard onChanged={refresh} onConnect={() => setConnectVisible(true)} />
 
       {loading ? (
         <LoadingState label="Loading your trades…" />
