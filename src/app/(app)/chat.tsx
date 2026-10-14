@@ -10,8 +10,20 @@
  * scrolls and the composer stays pinned. Handing the scroll to `Screen` would
  * put the composer at the bottom of the content rather than the bottom of the
  * screen.
+ *
+ * Voice: the mic button records a clip (expo-audio), `lib/voice.ts` sends it to
+ * the proxy to be turned into text, and the words land in the text box so you
+ * can fix them before sending. Voice never sends anything by itself.
  */
 
+import { Ionicons } from '@expo/vector-icons';
+import {
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from 'expo-audio';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -34,6 +46,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { askClaude, hasClaudeKey, type ClaudeTurn } from '@/lib/claude-client';
 import { useThemedStyles } from '@/lib/styles';
 import { buildTradingContext, fetchTradingContext, type ContextTrade } from '@/lib/trade-context';
+import { transcribeRecording } from '@/lib/voice';
 
 /** Starter questions, so an empty chat is not a blank prompt box. */
 const SUGGESTIONS = [
@@ -54,8 +67,15 @@ export default function ChatScreen() {
   const [trades, setTrades] = useState<ContextTrade[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const keyed = hasClaudeKey();
+
+  // Voice recording. HIGH_QUALITY gives an .m4a file on phones, which Gemini accepts.
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(recorder);
+  const recording = recorderState.isRecording;
 
   const loadContext = useCallback(async () => {
     try {
@@ -70,6 +90,40 @@ export default function ChatScreen() {
   useEffect(() => {
     loadContext();
   }, [loadContext]);
+
+  /** Tap once to start recording, tap again to stop and turn it into text. */
+  const toggleMic = useCallback(async () => {
+    setVoiceError(null);
+    try {
+      if (recording) {
+        await recorder.stop();
+        const uri = recorder.uri;
+        if (!uri) {
+          throw new Error('The recording was empty. Hold the mic a little longer.');
+        }
+        setTranscribing(true);
+        const text = await transcribeRecording(uri);
+        // Add to whatever is already typed, so voice and typing can be mixed.
+        setDraft((current) => (current.trim() ? `${current.trim()} ${text}` : text));
+        return;
+      }
+
+      // Android and iOS both ask the user the first time.
+      const { granted } = await AudioModule.requestRecordingPermissionsAsync();
+      if (!granted) {
+        setVoiceError('Microphone permission was denied. Turn it on in your phone settings.');
+        return;
+      }
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+    } catch (err) {
+      console.error(err);
+      setVoiceError(err instanceof Error ? err.message : 'Voice failed. Try again.');
+    } finally {
+      setTranscribing(false);
+    }
+  }, [recorder, recording]);
 
   const send = useCallback(
     async (text: string) => {
@@ -128,7 +182,8 @@ export default function ChatScreen() {
   );
 
   const loading = trades === null && loadError === null;
-  const canSend = keyed && !!trades && !sending && draft.trim().length > 0;
+  const canSend = keyed && !!trades && !sending && !recording && !transcribing && draft.trim().length > 0;
+  const canRecord = keyed && !!trades && !sending && !transcribing;
 
   return (
     <Screen scroll={false}>
@@ -227,6 +282,19 @@ export default function ChatScreen() {
           ) : null}
         </ScrollView>
 
+        {recording || transcribing || voiceError ? (
+          <View style={styles.voiceStatus}>
+            {transcribing ? <ActivityIndicator color={theme.color.accent} /> : null}
+            <ThemedText variant="caption" tone={voiceError ? 'loss' : 'textSecondary'}>
+              {voiceError
+                ? voiceError
+                : recording
+                  ? 'Recording… tap the mic again when you are done.'
+                  : 'Turning your voice into text…'}
+            </ThemedText>
+          </View>
+        ) : null}
+
         <View style={styles.composer}>
           <TextInput
             style={styles.input}
@@ -243,6 +311,25 @@ export default function ChatScreen() {
             blurOnSubmit={false}
             testID="chat-input"
           />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={recording ? 'Stop recording' : 'Record a voice message'}
+            onPress={toggleMic}
+            disabled={!canRecord && !recording}
+            style={({ pressed }) => [
+              styles.mic,
+              recording && styles.micActive,
+              !canRecord && !recording && styles.micDisabled,
+              pressed && styles.chipPressed,
+            ]}
+            testID="chat-mic"
+          >
+            <Ionicons
+              name={recording ? 'stop' : 'mic'}
+              size={22}
+              color={recording ? theme.color.loss : theme.color.text}
+            />
+          </Pressable>
           <Button
             label="Send"
             loading={sending}
@@ -313,6 +400,12 @@ const sheet = (t: Theme) =>
     chipPressed: {
       opacity: 0.7,
     },
+    voiceStatus: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.space.two,
+      paddingTop: t.space.two,
+    },
     composer: {
       flexDirection: 'row',
       alignItems: 'flex-end',
@@ -339,5 +432,23 @@ const sheet = (t: Theme) =>
       // Matches the Button's md height so the two line up rather than the input
       // sitting a few pixels proud of it.
       minHeight: 44,
+    },
+    // Same 44px height as the input and the Send button, so the row lines up.
+    mic: {
+      width: 44,
+      height: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: t.radius.lg,
+      borderWidth: 1,
+      borderColor: t.color.borderStrong,
+      backgroundColor: t.color.bgSunken,
+    },
+    micActive: {
+      borderColor: t.color.loss,
+      backgroundColor: t.color.lossSoft,
+    },
+    micDisabled: {
+      opacity: 0.4,
     },
   });
