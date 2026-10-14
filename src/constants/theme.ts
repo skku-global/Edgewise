@@ -51,7 +51,7 @@ export type ColorScheme = 'light' | 'dark';
  */
 export const Brand = {
   white: '#FFFFFF',
-  charcoal: '#14251C',
+  charcoal: '#0A1210',
   green: '#1F7A4C',
   greenBright: '#4ECB8D',
   red: '#B23A3A',
