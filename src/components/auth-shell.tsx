@@ -245,7 +245,6 @@ const sheet = (t: Theme) =>
       backgroundColor: t.color.surface,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: t.color.border,
-      ...t.elevation[3],
     },
     cardBrand: {
       flexDirection: 'row',
