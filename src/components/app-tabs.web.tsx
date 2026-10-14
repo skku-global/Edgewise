@@ -1,17 +1,22 @@
 /**
- * Web navigation — a fixed top bar, not a bottom tab bar.
+ * Web navigation — responsive top bar with desktop links and mobile hamburger curtain,
+ * plus a persistent floating Coach AI button.
  *
  * `expo-router/ui` is the headless tab primitive: it owns the routing and the
- * focused state, and hands the rendering over entirely. That is why this file
- * exists as a `.web.tsx` sibling of `app-tabs.tsx` rather than a branch inside
- * it — on native the platform tab bar is the right control, and on a desktop
- * browser a bottom bar is not.
+ * focused state, and hands the rendering over entirely.
  *
- * Two fixes over the previous version: the Reports screen is now reachable (557
- * lines of it were built and then never linked), and the bar carries the account
- * button, which is the only sign-out path on web.
+ * On desktop (>= 768px), links sit horizontally in the top bar with the AccountButton.
+ * On mobile (< 768px), the top bar contains only the brand logo and the hamburger button
+ * (styled after skku-global's sleek menu-btn). The mobile menu expands into a fullscreen
+ * curtain featuring numbered links (01 Dashboard, 02 Trades, etc.), the seam divider,
+ * and account access.
+ *
+ * The Coach tab is also accessible on all pages via a floating action button (FAB) at
+ * bottom-right, giving 1-tap AI access everywhere while staying hidden on the chat screen itself.
  */
 
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { usePathname, useRouter } from 'expo-router';
 import {
   TabList,
   Tabs,
@@ -20,11 +25,20 @@ import {
   type TabListProps,
   type TabTriggerSlotProps,
 } from 'expo-router/ui';
-import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import {
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { AccountButton } from '@/components/ui/account-button';
 import { MaxContentWidth, WebTopNavInset, type Theme } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { useThemedStyles } from '@/lib/styles';
 
 /** Route name to href. Kept together so a new screen is one entry, not four. */
@@ -36,12 +50,42 @@ const LINKS = [
   { name: 'chat', href: '/chat', label: 'Coach' },
 ] as const;
 
+export const MobileBreakpoint = 768;
+
 export default function AppTabs() {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { width } = useWindowDimensions();
+  const isMobile = width < MobileBreakpoint;
+
+  let pathname = '/';
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    pathname = usePathname();
+  } catch {
+    // Fallback when rendered outside router context
+  }
+
+  // Close curtain when navigating
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
+
+  // Close curtain automatically if window is resized to desktop
+  useEffect(() => {
+    if (!isMobile && menuOpen) {
+      setMenuOpen(false);
+    }
+  }, [isMobile, menuOpen]);
+
   return (
     <Tabs>
       <TabSlot style={styles.slot} />
       <TabList asChild>
-        <NavBar>
+        <NavBar
+          menuOpen={menuOpen}
+          onToggleMenu={() => setMenuOpen((o) => !o)}
+          isMobile={isMobile}
+        >
           {LINKS.map((link) => (
             <TabTrigger key={link.name} name={link.name} href={link.href} asChild>
               <NavLink>{link.label}</NavLink>
@@ -49,6 +93,17 @@ export default function AppTabs() {
           ))}
         </NavBar>
       </TabList>
+
+      {/* Small Device Fullscreen Curtain Dropdown (skku-global style) */}
+      {isMobile && menuOpen ? (
+        <CurtainMenu
+          onClose={() => setMenuOpen(false)}
+          activePath={pathname}
+        />
+      ) : null}
+
+      {/* Floating Coach Message Button across all pages */}
+      <CoachFloatingButton pathname={pathname} />
     </Tabs>
   );
 }
@@ -62,29 +117,13 @@ export function NavLink({ children, isFocused, style, ...rest }: TabTriggerSlotP
   const sheet = useThemedStyles(navSheet);
 
   return (
-    // `{...rest}` first, and `style` pulled out of it by name — the same trap as
-    // in `NavBar` below, sprung from the other side.
-    //
-    // `TabTrigger asChild` renders a Radix `Slot`, whose `mergeProps` only merges
-    // props the child element declares for itself. `<NavLink>{label}</NavLink>`
-    // declares nothing but `children`, so the trigger's own
-    // `{ flexDirection: 'row', justifyContent: 'space-between' }` arrived
-    // untouched in `rest` — and spreading `rest` last replaced this callback
-    // wholesale. Every link silently lost its padding, its pill radius and its
-    // hover/focused/pressed backgrounds, which is both why the bar looked
-    // cramped and why clicking appeared to do nothing: the navigation fired, but
-    // with no focused pill and no hit area beyond the glyphs themselves, nothing
-    // in the bar acknowledged it.
     <Pressable
       {...rest}
       accessibilityRole="link"
       accessibilityState={{ selected: isFocused }}
       style={(state) => [
-        // Kept rather than discarded, but first, so these tokens win.
         typeof style === 'function' ? style(state) : style,
         sheet.link,
-        // Hover is web-only and react-native-web is the only renderer that
-        // reports it, which is fine — this file only ever runs there.
         state.hovered && !isFocused && sheet.linkHovered,
         isFocused && sheet.linkFocused,
         state.pressed && sheet.linkPressed,
@@ -97,39 +136,41 @@ export function NavLink({ children, isFocused, style, ...rest }: TabTriggerSlotP
   );
 }
 
-function NavBar(props: TabListProps) {
+type NavBarProps = TabListProps & {
+  menuOpen?: boolean;
+  onToggleMenu?: () => void;
+  isMobile?: boolean;
+};
+
+function NavBar({ menuOpen = false, onToggleMenu, isMobile = false, ...props }: NavBarProps) {
   const sheet = useThemedStyles(navSheet);
 
   return (
-    // `{...props}` must come before `style`: TabList passes its own style down,
-    // so spreading last silently dropped `bar`'s fixed positioning and left the
-    // nav laid out inline below the fold.
     <View {...props} style={[props.style, sheet.bar]}>
       <View style={sheet.inner}>
         <Wordmark />
 
-        <View style={sheet.links}>{props.children}</View>
+        {/* Desktop nav pills — kept mounted in TabList so Tabs registers routes, but hidden on mobile */}
+        <View style={isMobile ? sheet.linksHidden : sheet.links}>
+          {props.children}
+        </View>
 
-        <AccountButton />
+        {/* On mobile: just the logo and hamburger button. On desktop: AccountButton */}
+        {isMobile ? (
+          <MenuButton open={menuOpen} onPress={onToggleMenu} />
+        ) : (
+          <AccountButton />
+        )}
       </View>
     </View>
   );
 }
 
-/**
- * Below this width the bar cannot hold the wordmark, five links and the account
- * button at once — the five pills alone are around 430px, plus the mark, the
- * account button and the bar's own padding. Nothing shrinks in React Native by
- * default (`flexShrink` is 0, not 1 as on the web), so an overflowing bar does
- * not compress: it pushes the rightmost links past the edge, where they are
- * invisible and unclickable. The word is the one part that can go without
- * costing navigation.
- */
-const WordmarkBreakpoint = 720;
-
 function Wordmark() {
   const sheet = useThemedStyles(navSheet);
   const { width } = useWindowDimensions();
+  // Show brand name as long as screen has at least 340px width
+  const showName = width >= 340;
 
   return (
     <View style={sheet.brand}>
@@ -138,8 +179,165 @@ function Wordmark() {
           E
         </ThemedText>
       </View>
-      {width >= WordmarkBreakpoint ? <ThemedText variant="heading">Edgewise</ThemedText> : null}
+      {showName ? <ThemedText variant="heading">Edgewise</ThemedText> : null}
     </View>
+  );
+}
+
+/**
+ * Hamburger toggle button — styled after skku-global's pill button.
+ */
+function MenuButton({ open, onPress }: { open: boolean; onPress?: () => void }) {
+  const sheet = useThemedStyles(navSheet);
+  const theme = useTheme();
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={open ? 'Close navigation menu' : 'Open navigation menu'}
+      accessibilityState={{ expanded: open }}
+      onPress={onPress}
+      style={({ pressed }) => [
+        sheet.menuBtn,
+        open && sheet.menuBtnOpen,
+        pressed && sheet.menuBtnPressed,
+      ]}
+    >
+      <Ionicons
+        name={open ? 'close' : 'menu'}
+        size={18}
+        color={open ? theme.color.accentText : theme.color.text}
+      />
+      <ThemedText
+        variant="label"
+        tone={open ? 'accentText' : 'text'}
+        style={sheet.menuBtnText}
+      >
+        {open ? 'Close' : 'Menu'}
+      </ThemedText>
+    </Pressable>
+  );
+}
+
+/**
+ * Fullscreen mobile curtain menu — inspired by skku-global's Menu.jsx.
+ * Numbered items (01 Dashboard, 02 Trades...), seam divider, and account actions.
+ */
+function CurtainMenu({
+  onClose,
+  activePath,
+}: {
+  onClose: () => void;
+  activePath: string;
+}) {
+  const sheet = useThemedStyles(navSheet);
+  const router = useRouter();
+
+  // Escape key closes menu on web
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  const handleSelect = (href: string) => {
+    onClose();
+    router.navigate(href as any);
+  };
+
+  return (
+    <View style={sheet.curtain}>
+      <ScrollView
+        contentContainerStyle={sheet.curtainScroll}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={sheet.curtainNav}>
+          {LINKS.map((link, i) => {
+            const isActive =
+              link.href === '/'
+                ? activePath === '/' || activePath === ''
+                : activePath === link.href || activePath.startsWith(link.href);
+
+            return (
+              <Pressable
+                key={link.name}
+                accessibilityRole="link"
+                accessibilityLabel={link.label}
+                accessibilityState={{ selected: isActive }}
+                onPress={() => handleSelect(link.href)}
+                style={({ pressed }) => [
+                  sheet.bigLink,
+                  pressed && sheet.bigLinkPressed,
+                ]}
+              >
+                <ThemedText style={[sheet.linkNum, isActive && sheet.linkNumActive]}>
+                  {`0${i + 1}`}
+                </ThemedText>
+                <ThemedText style={[sheet.linkText, isActive && sheet.linkTextActive]}>
+                  {link.label}
+                </ThemedText>
+                {isActive ? <View style={sheet.activeDot} /> : null}
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {/* The Seam — from skku-global */}
+        <View style={sheet.seam} />
+
+        {/* Account & Sign out row */}
+        <View style={sheet.curtainAccount}>
+          <AccountButton />
+          <View style={sheet.curtainAccountInfo}>
+            <ThemedText variant="body" tone="text">
+              Account & Profile
+            </ThemedText>
+            <ThemedText variant="caption" tone="textTertiary">
+              Tap avatar to sign out
+            </ThemedText>
+          </View>
+        </View>
+
+        {/* Curtain footer — from skku-global */}
+        <ThemedText variant="caption" tone="textTertiary" style={sheet.curtainFoot}>
+          Edgewise • Trade journal & AI Coach
+        </ThemedText>
+      </ScrollView>
+    </View>
+  );
+}
+
+/**
+ * Floating Coach Button (FAB) — appears across all pages, hidden on /chat.
+ */
+function CoachFloatingButton({ pathname }: { pathname: string }) {
+  const sheet = useThemedStyles(navSheet);
+  const theme = useTheme();
+  const router = useRouter();
+
+  // Hide on the coach screen so it doesn't overlap the chat composer
+  const isChat = pathname === '/chat' || pathname?.endsWith('/chat');
+  if (isChat) {
+    return null;
+  }
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Ask AI Trading Coach"
+      onPress={() => router.navigate('/chat')}
+      style={({ pressed }) => [
+        sheet.fab,
+        pressed && sheet.fabPressed,
+      ]}
+    >
+      <Ionicons name="chatbubble-ellipses" size={26} color={theme.color.textOnFill} />
+    </Pressable>
   );
 }
 
@@ -156,10 +354,6 @@ const navSheet = (t: Theme) =>
       top: 0,
       left: 0,
       right: 0,
-      // Exactly `WebTopNavInset`, so the padding every screen adds to clear this
-      // bar is the height this bar actually has. Derived from the constant rather
-      // than written twice, because the two drifting apart is either a gap or a
-      // clipped heading.
       height: WebTopNavInset,
       paddingHorizontal: t.space.three,
       flexDirection: 'row',
@@ -168,17 +362,14 @@ const navSheet = (t: Theme) =>
       backgroundColor: t.color.bg,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: t.color.border,
-      // Above every scrolling screen, so content passes behind the bar rather
-      // than through the gaps either side of the inner column.
       zIndex: 100,
     },
     inner: {
       flexDirection: 'row',
       alignItems: 'center',
+      justifyContent: 'space-between',
       gap: t.space.three,
       width: '100%',
-      // Lines the nav up with the screen content below it, which is capped at
-      // the same width.
       maxWidth: MaxContentWidth,
     },
     brand: {
@@ -198,9 +389,10 @@ const navSheet = (t: Theme) =>
     links: {
       flexDirection: 'row',
       alignItems: 'center',
-      // The pills' own 16px of horizontal padding does most of the separating —
-      // this is only the gap between two adjacent backgrounds, so it stays small.
       gap: t.space.one,
+    },
+    linksHidden: {
+      display: 'none',
     },
     link: {
       paddingVertical: t.space.two,
@@ -217,4 +409,121 @@ const navSheet = (t: Theme) =>
     linkPressed: {
       opacity: 0.7,
     },
+    menuBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.space.one,
+      paddingVertical: t.space.one,
+      paddingHorizontal: t.space.three,
+      borderRadius: t.radius.pill,
+      borderWidth: 1,
+      borderColor: t.color.border,
+      backgroundColor: 'transparent',
+    },
+    menuBtnOpen: {
+      borderColor: t.color.accent,
+      backgroundColor: t.color.accentSoft,
+    },
+    menuBtnPressed: {
+      opacity: 0.7,
+    },
+    menuBtnText: {
+      fontSize: 14,
+      fontWeight: '500',
+    },
+    curtain: {
+      position: 'fixed' as any,
+      top: WebTopNavInset,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: t.color.bg,
+      zIndex: 99,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: t.color.border,
+    },
+    curtainScroll: {
+      paddingHorizontal: t.space.four,
+      paddingVertical: t.space.four,
+      minHeight: '100%',
+      justifyContent: 'flex-start',
+    },
+    curtainNav: {
+      gap: t.space.three,
+      paddingVertical: t.space.two,
+    },
+    bigLink: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: t.space.two,
+      gap: t.space.three,
+    },
+    bigLinkPressed: {
+      opacity: 0.7,
+    },
+    linkNum: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: t.color.textTertiary,
+      width: 28,
+    },
+    linkNumActive: {
+      color: t.color.accentText,
+    },
+    linkText: {
+      fontSize: 26,
+      fontWeight: '700',
+      color: t.color.text,
+      letterSpacing: -0.5,
+    },
+    linkTextActive: {
+      color: t.color.accentText,
+    },
+    activeDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: t.color.accent,
+      marginLeft: 'auto',
+    },
+    seam: {
+      height: 2,
+      backgroundColor: t.color.accent,
+      width: '100%',
+      marginVertical: t.space.four,
+      borderRadius: 1,
+    },
+    curtainAccount: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.space.three,
+      paddingVertical: t.space.two,
+    },
+    curtainAccountInfo: {
+      flexShrink: 1,
+      gap: 2,
+    },
+    curtainFoot: {
+      marginTop: t.space.six,
+      textAlign: 'center',
+      paddingBottom: t.space.four,
+    },
+    fab: {
+      position: 'fixed' as any,
+      bottom: 24,
+      right: 24,
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: t.color.accent,
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 90,
+      ...t.elevation[3],
+    },
+    fabPressed: {
+      opacity: 0.85,
+      transform: [{ scale: 0.95 }],
+    },
   });
+
