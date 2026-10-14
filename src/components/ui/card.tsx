@@ -1,11 +1,8 @@
 /**
- * Card, and the section header that usually sits above one.
+ * Card and section header.
  *
- * A card is a hairline border plus a level-1 shadow — not a heavy drop shadow.
- * In light mode the border does the separating and the shadow only lifts; in
- * dark mode `surface` is lighter than `bg`, so the border is what keeps a row of
- * cards from merging into one block. Both are needed for the pair of schemes to
- * look like the same design.
+ * Flat: surfaces separate by lightness step against the page, with a
+ * near-invisible hairline. No shadow.
  */
 
 import { StyleSheet, View, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
@@ -26,11 +23,8 @@ export function Card({ style, flush = false, ...rest }: CardProps) {
 }
 
 export type SectionProps = {
-  /** Small all-caps marker. */
   title: string;
-  /** Optional line under it, for a unit or a caveat. */
   subtitle?: string;
-  /** Rendered at the right end of the header row — a filter, a link. */
   action?: React.ReactNode;
   style?: StyleProp<ViewStyle>;
 };
@@ -41,8 +35,8 @@ export function SectionHeader({ title, subtitle, action, style }: SectionProps) 
   return (
     <View style={[styles.sectionHeader, style]}>
       <View style={styles.sectionText}>
-        <ThemedText variant="overline" tone="textTertiary">
-          {title.toUpperCase()}
+        <ThemedText variant="label" tone="textSecondary">
+          {title}
         </ThemedText>
         {subtitle ? (
           <ThemedText variant="caption" tone="textTertiary">
@@ -69,7 +63,6 @@ const sheet = (t: Theme) =>
       borderRadius: t.radius.lg,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: t.color.border,
-      ...t.elevation[1],
     },
     padded: {
       padding: t.space.three,
@@ -88,8 +81,6 @@ const sheet = (t: Theme) =>
     divider: {
       height: StyleSheet.hairlineWidth,
       backgroundColor: t.color.border,
-      // Full-bleed inside a padded card: cancel the padding so the line runs
-      // edge to edge like a real separator rather than a floating dash.
       marginHorizontal: -t.space.three,
     },
   });

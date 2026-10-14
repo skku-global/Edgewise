@@ -112,38 +112,38 @@ export type ColorTokens = {
 };
 
 const lightColors: ColorTokens = {
-  bg: Brand.white,
-  bgSunken: '#F5F9F7',
-  surface: Brand.white,
-  surfaceRaised: Brand.white,
-  surfaceActive: '#EFF6F2',
+  bg: '#EEF2EE',
+  bgSunken: '#E6ECE7',
+  surface: '#F8FAF8',
+  surfaceRaised: '#FFFFFF',
+  surfaceActive: '#E3EAE4',
 
-  hero: Brand.charcoal,
-  heroText: '#E6EEE9',
-  heroMuted: '#93A79B',
-  scrim: 'rgba(20, 37, 28, 0.55)',
+  hero: '#0F1A14',
+  heroText: '#E8F1EC',
+  heroMuted: '#8FA699',
+  scrim: 'rgba(10, 18, 16, 0.55)',
 
-  text: Brand.charcoal,
-  textSecondary: '#57685E',
-  textTertiary: '#7F8B84',
-  textOnFill: Brand.white,
+  text: '#0F1A14',
+  textSecondary: '#4D6055',
+  textTertiary: '#76867C',
+  textOnFill: '#FFFFFF',
 
-  accent: Brand.green,
-  accentText: '#1B6B43',
-  accentSoft: '#E8F4EE',
+  accent: '#0F7A45',
+  accentText: '#0B6638',
+  accentSoft: '#DDEBE2',
 
-  gain: Brand.green,
-  gainSoft: '#E8F4EE',
-  loss: Brand.red,
-  lossSoft: '#FBEDEC',
-  neutral: '#B9C7BF',
+  gain: '#0F7A45',
+  gainSoft: '#DDEBE2',
+  loss: '#C0453D',
+  lossSoft: '#F6E3E1',
+  neutral: '#B4C2B9',
 
-  border: '#E6EEE9',
-  borderStrong: '#D7E4DD',
-  focus: Brand.greenBright,
+  border: '#DDE5DF',
+  borderStrong: '#C9D5CD',
+  focus: '#2DB874',
 
-  chartGrid: '#EDF3F0',
-  chartAxis: '#D7E4DD',
+  chartGrid: '#E3EAE4',
+  chartAxis: '#C9D5CD',
 };
 
 /**
@@ -159,41 +159,38 @@ const lightColors: ColorTokens = {
  *     contrast while the dark ink passes comfortably.
  */
 const darkColors: ColorTokens = {
-  bg: '#0D1512',
-  bgSunken: '#080E0C',
-  surface: '#141F1A',
-  surfaceRaised: '#1A2721',
-  surfaceActive: '#1E2E27',
+  bg: '#0A1210',
+  bgSunken: '#060C0A',
+  surface: '#101A16',
+  surfaceRaised: '#16221D',
+  surfaceActive: '#1B2B24',
 
-  // In light mode the hero works by inverting the page. Inverting a dark page
-  // would mean a white band, which is worse than the problem, so here it lifts
-  // instead: a raised, green-tinted panel.
-  hero: '#16241D',
-  heroText: '#E9F2ED',
-  heroMuted: '#8DA398',
-  scrim: 'rgba(0, 0, 0, 0.66)',
+  hero: '#0F1A15',
+  heroText: '#E8F1EC',
+  heroMuted: '#86A093',
+  scrim: 'rgba(0, 0, 0, 0.7)',
 
-  text: '#E9F2ED',
-  textSecondary: '#A0B3A8',
-  textTertiary: '#72857A',
-  textOnFill: '#08110D',
+  text: '#E8F1EC',
+  textSecondary: '#9DB2A6',
+  textTertiary: '#6E8479',
+  textOnFill: '#06100B',
 
-  accent: Brand.greenBright,
-  accentText: '#5FD69A',
-  accentSoft: '#12291E',
+  accent: '#6FE3A8',
+  accentText: '#6FE3A8',
+  accentSoft: '#10261C',
 
-  gain: Brand.greenBright,
-  gainSoft: '#12291E',
-  loss: Brand.redBright,
-  lossSoft: '#2C1917',
-  neutral: '#3A4A42',
+  gain: '#6FE3A8',
+  gainSoft: '#10261C',
+  loss: '#E0675E',
+  lossSoft: '#2A1816',
+  neutral: '#33443B',
 
-  border: '#1F2E27',
-  borderStrong: '#2E4038',
-  focus: Brand.greenBright,
+  border: '#16221D',
+  borderStrong: '#2A3C33',
+  focus: '#6FE3A8',
 
-  chartGrid: '#1A2721',
-  chartAxis: '#2E4038',
+  chartGrid: '#14201B',
+  chartAxis: '#2A3C33',
 };
 
 /**
@@ -260,6 +257,7 @@ export const Fonts = Platform.select({
   ios: {
     /** iOS `UIFontDescriptorSystemDesignDefault` */
     sans: 'system-ui',
+    display: 'system-ui',
     /** iOS `UIFontDescriptorSystemDesignSerif` */
     serif: 'ui-serif',
     /** iOS `UIFontDescriptorSystemDesignRounded` */
@@ -269,12 +267,14 @@ export const Fonts = Platform.select({
   },
   default: {
     sans: 'normal',
+    display: 'normal',
     serif: 'serif',
     rounded: 'normal',
     mono: 'monospace',
   },
   web: {
-    sans: 'var(--font-display)',
+    sans: 'var(--font-body)',
+    display: 'var(--font-display)',
     serif: 'var(--font-serif)',
     rounded: 'var(--font-rounded)',
     mono: 'var(--font-mono)',
@@ -299,11 +299,11 @@ const textStyles = <T extends Record<string, TextStyle>>(styles: T) => styles;
  */
 export const Type = textStyles({
   /** The one big number on a screen. */
-  display: { fontSize: 34, lineHeight: 40, fontWeight: '700', letterSpacing: -0.8 },
+  display: { fontFamily: Fonts.display, fontSize: 34, lineHeight: 40, fontWeight: '700', letterSpacing: -0.8 },
   /** Screen titles. */
-  title: { fontSize: 22, lineHeight: 28, fontWeight: '700', letterSpacing: -0.4 },
+  title: { fontFamily: Fonts.display, fontSize: 22, lineHeight: 28, fontWeight: '700', letterSpacing: -0.4 },
   /** Card and section headings. */
-  heading: { fontSize: 17, lineHeight: 23, fontWeight: '600', letterSpacing: -0.2 },
+  heading: { fontFamily: Fonts.display, fontSize: 17, lineHeight: 23, fontWeight: '600', letterSpacing: -0.2 },
   subheading: { fontSize: 15, lineHeight: 21, fontWeight: '600', letterSpacing: -0.1 },
   body: { fontSize: 15, lineHeight: 22, fontWeight: '400' },
   bodyStrong: { fontSize: 15, lineHeight: 22, fontWeight: '600' },
@@ -355,11 +355,11 @@ export const Spacing = {
 } as const;
 
 export const Radius = {
-  xs: 4,
-  sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 22,
+  xs: 2,
+  sm: 4,
+  md: 6,
+  lg: 8,
+  xl: 12,
   pill: 999,
 } as const;
 
