@@ -145,7 +145,7 @@ const sheet = (t: Theme) =>
       flexDirection: 'row',
       height: 44,
       padding: TrackPadding,
-      borderRadius: t.radius.md,$1backgroundColor: t.color.bgSunken,
+      borderRadius: t.radius.md,backgroundColor: t.color.bgSunken,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: t.color.border,
     },
@@ -156,7 +156,7 @@ const sheet = (t: Theme) =>
       left: TrackPadding,
       top: TrackPadding,
       bottom: TrackPadding,
-      borderRadius: t.radius.sm,$1backgroundColor: t.color.surfaceRaised,
+      borderRadius: t.radius.sm,backgroundColor: t.color.surfaceRaised,
     },
     segment: {
       flex: 1,
