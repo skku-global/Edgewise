@@ -14,9 +14,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { getEffectiveProxyUrl } from '@/lib/claude-client';
 import { supabase } from '@/lib/supabase';
-
 
 export type Direction = 'buy' | 'sell';
 export type EntryStatus = 'planned' | 'open' | 'closed';
@@ -128,11 +126,25 @@ export async function usualLotSize(): Promise<number | null> {
   return sizes.length % 2 ? sizes[mid] : (sizes[mid - 1] + sizes[mid]) / 2;
 }
 
-export function computeFlags(plan: PlanInput, usual: number | null): string[] {
+export function computeFlags(
+  plan: PlanInput,
+  usual: number | null,
+  /** Your fixed risk and what 1.00 of price move is worth per lot, when known. */
+  riskCheck?: { riskAmount: number; valuePerUnit: number },
+): string[] {
   const flags: string[] = [];
 
   if (plan.stop_loss === null) {
     flags.push('No stop loss set');
+  }
+
+  if (riskCheck && plan.planned_entry !== null && plan.stop_loss !== null && plan.size) {
+    const loss = plan.size * Math.abs(plan.planned_entry - plan.stop_loss) * riskCheck.valuePerUnit;
+    if (loss > riskCheck.riskAmount * 1.25) {
+      flags.push(
+        `This lot size would lose about $${loss.toFixed(2)} at your stop, above your fixed $${riskCheck.riskAmount}`,
+      );
+    }
   }
 
   if (usual && plan.size && plan.size > usual * 2) {
@@ -188,13 +200,12 @@ export function capGrade(grade: string, flags: string[]): string {
 /* ------------------------------------------------------------------ */
 
 function proxyBase(): string {
-  const base = getEffectiveProxyUrl().replace(/\/+$/, '');
+  const base = (process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL ?? '').trim().replace(/\/+$/, '');
   if (!base) {
     throw new Error('The AI proxy is not set. Set EXPO_PUBLIC_CLAUDE_PROXY_URL and restart the app.');
   }
   return base;
 }
-
 
 function errorMessage(raw: string): string | null {
   try {

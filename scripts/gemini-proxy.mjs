@@ -253,6 +253,38 @@ async function handleExtractTrade(req, res) {
   sendJson(res, 200, { text });
 }
 
+/** POST /v1/extract-plan - one or several screenshots of ONE trade, as JSON { images: [{ mime, data }] }. */
+const PLAN_PROMPT = `These screenshots show ONE forex/CFD trade (chart with lines, positions tab, order ticket or history). Combine them and read: pair (symbol, e.g. XAUUSD), direction ("buy" or "sell"), entry_price, stop_loss (S/L), take_profit (T/P), size (lots), notes (one short line of anything useful). Use null for anything not clearly visible. Never invent or estimate numbers. Reply with JSON only: {"pair":..,"direction":..,"entry_price":..,"stop_loss":..,"take_profit":..,"size":..,"notes":..}`;
+
+async function handleExtractPlan(req, res) {
+  const body = JSON.parse((await readBody(req, 18 * 1024 * 1024)).toString("utf8"));
+  const images = Array.isArray(body.images) ? body.images.slice(0, 6) : [];
+  if (images.length === 0) {
+    sendJson(res, 400, { error: { message: "No images sent" } });
+    return;
+  }
+  const parts = [{ text: PLAN_PROMPT }];
+  for (const img of images) {
+    let mime = String(img.mime ?? "").toLowerCase();
+    if (mime === "image/jpg") mime = "image/jpeg";
+    if (!IMAGE_MIMES.has(mime) || !img.data) {
+      sendJson(res, 400, { error: { message: `Use PNG, JPEG or WebP screenshots (got "${mime || "none"}")` } });
+      return;
+    }
+    parts.push({ inline_data: { mime_type: mime, data: img.data } });
+  }
+  const result = await callGemini({
+    contents: [{ role: "user", parts }],
+    generationConfig: { temperature: 0, responseMimeType: "application/json" },
+  });
+  if (!result.ok) {
+    sendJson(res, result.status, result.data);
+    return;
+  }
+  const text = (result.data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("").trim();
+  sendJson(res, 200, { text });
+}
+
 const server = createServer(async (req, res) => {
   cors(res);
 
@@ -268,13 +300,15 @@ const server = createServer(async (req, res) => {
       await handleTranscribe(req, res);
     } else if (req.method === "POST" && req.url?.startsWith("/v1/extract-trade")) {
       await handleExtractTrade(req, res);
+    } else if (req.method === "POST" && req.url?.startsWith("/v1/extract-plan")) {
+      await handleExtractPlan(req, res);
     } else {
       sendJson(res, 404, { error: { message: "Not found" } });
     }
   } catch (error) {
     console.error(error);
     if (error.status === 413) {
-      sendJson(res, 413, { error: { message: "That recording is too long. Try a shorter one." } });
+      sendJson(res, 413, { error: { message: "That upload is too large. Try a shorter recording or fewer screenshots." } });
       return;
     }
     sendJson(res, 502, { error: { message: `Proxy could not reach Gemini: ${error.message}` } });
@@ -283,6 +317,6 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Gemini proxy on http://localhost:${PORT} (model: ${MODEL})`);
-  console.log(`Routes: POST /v1/messages (chat), POST /v1/transcribe (voice), POST /v1/extract-trade (screenshot)`);
+  console.log(`Routes: POST /v1/messages (chat), POST /v1/transcribe (voice), POST /v1/extract-trade (screenshot), POST /v1/extract-plan (several screenshots)`);
   console.log(`Keep EXPO_PUBLIC_CLAUDE_PROXY_URL=http://localhost:${PORT}`);
 });

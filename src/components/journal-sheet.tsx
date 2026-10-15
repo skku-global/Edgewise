@@ -33,7 +33,22 @@ import {
   type GradeOutcome,
   type PlanInput,
 } from '@/lib/journal';
+import { extractPlanFromImages, pickScreenshots } from '@/lib/plan-vision';
+import {
+  calcLots,
+  loadSizing,
+  resolvePointValue,
+  saveSizing,
+  type LotResult,
+  type SizingSettings,
+} from '@/lib/sizing';
 import { useThemedStyles } from '@/lib/styles';
+
+type SizingView = {
+  message?: string;
+  result?: LotResult;
+  source?: string;
+};
 
 type JournalSheetProps = {
   visible: boolean;
@@ -75,18 +90,11 @@ function toNumber(raw: string): number | null | 'bad' {
   return Number.isFinite(value) && value > 0 ? value : 'bad';
 }
 
-export function gradeTone(grade: string | null): 'gain' | 'textSecondary' | 'loss' {
-  if (grade === 'A+' || grade === 'A' || grade === 'B+') return 'gain';
-  if (grade === 'B' || grade === 'C+') return 'textSecondary';
-  return 'loss';
-}
-
-export function gradePillTone(grade: string | null): 'gain' | 'neutral' | 'loss' {
+export function gradeTone(grade: string | null): 'gain' | 'neutral' | 'loss' {
   if (grade === 'A+' || grade === 'A' || grade === 'B+') return 'gain';
   if (grade === 'B' || grade === 'C+') return 'neutral';
   return 'loss';
 }
-
 
 export function JournalSheet({ visible, onClose, onSaved }: JournalSheetProps) {
   const styles = useThemedStyles(sheet);
@@ -100,19 +108,136 @@ export function JournalSheet({ visible, onClose, onSaved }: JournalSheetProps) {
   const [error, setError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<{ grade: GradeOutcome; flags: string[]; plan: PlanInput } | null>(null);
 
+  const [readingShots, setReadingShots] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [riskText, setRiskText] = useState('');
+  const [valueText, setValueText] = useState('');
+  const [settings, setSettings] = useState<SizingSettings>({ riskAmount: null, pointValues: {} });
+  const [sizing, setSizing] = useState<SizingView | null>(null);
+  const [sizingBusy, setSizingBusy] = useState(false);
+
   useEffect(() => {
     if (!visible) {
       setForm(initialForm);
       setErrors({});
       setError(null);
       setOutcome(null);
+      setNote(null);
+      setSizing(null);
+      setValueText('');
       return;
     }
     loadRules().then((rules) => setRulesText(rules.join('\n')));
     usualLotSize()
       .then(setUsual)
       .catch(() => setUsual(null));
+    loadSizing().then((saved) => {
+      setSettings(saved);
+      setRiskText(saved.riskAmount ? String(saved.riskAmount) : '');
+    });
   }, [visible]);
+
+  /** Pick one or several screenshots and fill the plan from them. */
+  const fillFromScreenshots = async () => {
+    setError(null);
+    setNote(null);
+    try {
+      const picked = await pickScreenshots();
+      if (picked.length === 0) {
+        return;
+      }
+      setReadingShots(true);
+      const found = await extractPlanFromImages(picked);
+      const text = (value: number | null, fallback: string) =>
+        value !== null ? String(value) : fallback;
+      setForm((current) => ({
+        ...current,
+        pair: found.pair ?? current.pair,
+        direction: found.direction ?? current.direction,
+        planned_entry: text(found.entry_price, current.planned_entry),
+        stop_loss: text(found.stop_loss, current.stop_loss),
+        take_profit: text(found.take_profit, current.take_profit),
+        size: text(found.size, current.size),
+      }));
+      setOutcome(null);
+      setSizing(null);
+      setNote(
+        `Read ${picked.length} screenshot${picked.length === 1 ? '' : 's'}. ` +
+          `${found.notes ? found.notes + ' ' : ''}Check every number before you go on. AI can misread a digit.`,
+      );
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : 'Could not read those screenshots. Try again.');
+    } finally {
+      setReadingShots(false);
+    }
+  };
+
+  /** Lot size for your fixed risk, from entry and stop loss. Plain arithmetic. */
+  const calculateLots = async () => {
+    setError(null);
+    const risk = Number(riskText);
+    const entry = toNumber(form.planned_entry);
+    const stop = toNumber(form.stop_loss);
+    const pair = form.pair.trim().toUpperCase();
+
+    if (!(risk > 0)) {
+      setSizing({ message: 'Enter how many dollars you risk on each trade.' });
+      return;
+    }
+    if (!pair) {
+      setSizing({ message: 'Enter the pair first.' });
+      return;
+    }
+    if (entry === null || entry === 'bad' || stop === null || stop === 'bad') {
+      setSizing({ message: 'Fill in the entry and the stop loss first.' });
+      return;
+    }
+    const typed = valueText.trim() ? Number(valueText) : null;
+    if (typed !== null && !(typed > 0)) {
+      setSizing({ message: 'The value per lot must be a number above 0.' });
+      return;
+    }
+
+    setSizingBusy(true);
+    try {
+      const next: SizingSettings = {
+        riskAmount: risk,
+        pointValues: typed ? { ...settings.pointValues, [pair]: typed } : settings.pointValues,
+      };
+      await saveSizing(next);
+      setSettings(next);
+
+      const resolved = await resolvePointValue(pair, next);
+      if (!resolved) {
+        setSizing({
+          message:
+            `I do not know what a 1.00 price move is worth per 1 lot on ${pair}, and you have fewer ` +
+            'than 3 past trades on it. Type it in the box above. Find it in MetaTrader under the ' +
+            "pair's contract specification, or from a past trade: profit divided by (price move x lots).",
+        });
+        return;
+      }
+
+      const result = calcLots({ risk, entry, stop, valuePerUnit: resolved.value });
+      if (!result) {
+        setSizing({ message: 'Entry and stop loss cannot be the same price.' });
+        return;
+      }
+      setSizing({
+        result,
+        source:
+          resolved.source === 'learned'
+            ? `Value per lot learned from ${resolved.count} of your past ${pair} trades.`
+            : `Using the value you saved for ${pair}.`,
+      });
+    } catch (err) {
+      console.error(err);
+      setSizing({ message: 'Could not calculate that. Try again.' });
+    } finally {
+      setSizingBusy(false);
+    }
+  };
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -167,7 +292,18 @@ export function JournalSheet({ visible, onClose, onSaved }: JournalSheetProps) {
       const useRules = rules.length > 0 ? rules : DEFAULT_RULES;
       await saveRules(useRules);
 
-      const flags = computeFlags(plan, usual);
+      // If you have recorded a fixed risk and the pair's value per lot is known,
+      // a lot size that would lose more than that is flagged.
+      let riskCheck: { riskAmount: number; valuePerUnit: number } | undefined;
+      const riskNumber = Number(riskText);
+      if (riskNumber > 0) {
+        const resolved = await resolvePointValue(plan.pair, await loadSizing());
+        if (resolved) {
+          riskCheck = { riskAmount: riskNumber, valuePerUnit: resolved.value };
+        }
+      }
+
+      const flags = computeFlags(plan, usual, riskCheck);
       const grade = await gradePlan(plan, useRules, flags);
       setOutcome({ grade, flags, plan });
     } catch (err) {
@@ -230,6 +366,26 @@ export function JournalSheet({ visible, onClose, onSaved }: JournalSheetProps) {
       }
     >
       <View style={styles.form}>
+        <Card style={styles.resultCard}>
+          <ThemedText variant="bodyStrong">Fill it from screenshots</ThemedText>
+          <ThemedText variant="caption" tone="textTertiary">
+            Pick one or several: the chart with your lines, the positions tab, the history. The app
+            reads the pair, direction, entry, stop loss, take profit and lots.
+          </ThemedText>
+          <Button
+            label="Choose screenshots"
+            variant="secondary"
+            loading={readingShots}
+            disabled={grading}
+            onPress={fillFromScreenshots}
+          />
+          {note ? (
+            <ThemedText variant="caption" tone="textSecondary">
+              {note}
+            </ThemedText>
+          ) : null}
+        </Card>
+
         <Field
           label="Pair"
           value={form.pair}
@@ -310,6 +466,73 @@ export function JournalSheet({ visible, onClose, onSaved }: JournalSheetProps) {
             containerStyle={styles.flexOne}
           />
         </View>
+
+        <Card style={styles.resultCard}>
+          <ThemedText variant="bodyStrong">Lot size for your fixed risk</ThemedText>
+          <View style={styles.row}>
+            <Field
+              label="Risk per trade ($)"
+              value={riskText}
+              onChangeText={setRiskText}
+              placeholder="10"
+              keyboardType="decimal-pad"
+              numeric
+              hint="Saved for next time"
+              containerStyle={styles.flexOne}
+            />
+            <Field
+              label="$ per 1.00 move, 1 lot"
+              value={valueText}
+              onChangeText={setValueText}
+              placeholder="auto"
+              keyboardType="decimal-pad"
+              numeric
+              hint="Blank = learn from your trades"
+              containerStyle={styles.flexOne}
+            />
+          </View>
+          <Button
+            label="Calculate lot size"
+            variant="secondary"
+            loading={sizingBusy}
+            onPress={calculateLots}
+          />
+          {sizing?.message ? (
+            <ThemedText variant="caption" tone="loss">
+              {sizing.message}
+            </ThemedText>
+          ) : null}
+          {sizing?.result ? (
+            <View style={styles.resultCard}>
+              {sizing.result.lots > 0 ? (
+                <>
+                  <ThemedText variant="monoXl" tone="gain">
+                    {sizing.result.lots.toFixed(2)} lots
+                  </ThemedText>
+                  <ThemedText variant="body" tone="textSecondary">
+                    Loses about ${sizing.result.riskAtLots.toFixed(2)} if your stop is hit. Rounded
+                    down so it never goes above your ${riskText}.
+                  </ThemedText>
+                  <Button
+                    label="Use this lot size"
+                    onPress={() => set('size', sizing.result!.lots.toFixed(2))}
+                  />
+                </>
+              ) : (
+                <ThemedText variant="body" tone="loss">
+                  Even 0.01 lots would lose about ${sizing.result.riskAtMinLot.toFixed(2)} at this
+                  stop, which is more than your ${riskText}. Use a tighter stop or accept the
+                  higher risk on purpose.
+                </ThemedText>
+              )}
+              {sizing.source ? (
+                <ThemedText variant="caption" tone="textTertiary">
+                  {sizing.source} It is an estimate: check it against your broker.
+                </ThemedText>
+              ) : null}
+            </View>
+          ) : null}
+        </Card>
 
         <Field
           label="Why are you taking this trade?"
