@@ -91,7 +91,7 @@ function RootNavigator() {
     <ThemeProvider value={navigationThemes[theme.scheme]}>
       {/* `light` content: both schemes put a dark hero band behind the status
           bar, so dark glyphs would disappear into it. */}
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       <Stack
         screenOptions={{
