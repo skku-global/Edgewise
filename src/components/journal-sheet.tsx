@@ -19,6 +19,7 @@ import { Field } from '@/components/ui/field';
 import { Pill } from '@/components/ui/pill';
 import { Sheet } from '@/components/ui/sheet';
 import { VoiceButton } from '@/components/voice-button';
+import { VoiceQueueBanner } from '@/components/voice-queue-banner';
 import type { Theme } from '@/constants/theme';
 import {
   computeFlags,
@@ -533,6 +534,8 @@ export function JournalSheet({ visible, onClose, onSaved }: JournalSheetProps) {
             </View>
           ) : null}
         </Card>
+
+        <VoiceQueueBanner onText={append('reasons')} />
 
         <Field
           label="Why are you taking this trade?"

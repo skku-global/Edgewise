@@ -118,10 +118,13 @@ function toGeminiBody(appBody) {
   }));
 
   // A screenshot attached in the Coach chat rides on the LAST user message.
-  if (appBody.image?.data) {
+  const shots = [...(appBody.image?.data ? [appBody.image] : []), ...(Array.isArray(appBody.images) ? appBody.images.slice(0, 6) : [])];
+  if (shots.length > 0) {
     const last = contents[contents.length - 1];
     if (last && last.role === "user") {
-      last.parts.push({ inline_data: { mime_type: appBody.image.mime, data: appBody.image.data } });
+      for (const shot of shots) {
+        last.parts.push({ inline_data: { mime_type: shot.mime, data: shot.data } });
+      }
     }
   }
 
@@ -155,11 +158,13 @@ function toAppResponse(geminiData) {
 /** POST /v1/messages - chat. */
 async function handleChat(req, res) {
   // Bigger limit than before, because a screenshot can ride along as base64.
-  const appBody = JSON.parse((await readBody(req, 14 * 1024 * 1024)).toString("utf8"));
+  const appBody = JSON.parse((await readBody(req, 18 * 1024 * 1024)).toString("utf8"));
 
-  if (appBody.image && !IMAGE_MIMES.has(String(appBody.image.mime))) {
-    sendJson(res, 400, { error: { message: `Use a PNG, JPEG or WebP screenshot (got "${appBody.image.mime}")` } });
-    return;
+  for (const shot of [...(appBody.image ? [appBody.image] : []), ...(Array.isArray(appBody.images) ? appBody.images : [])]) {
+    if (!IMAGE_MIMES.has(String(shot.mime))) {
+      sendJson(res, 400, { error: { message: `Use a PNG, JPEG or WebP screenshot (got "${shot.mime}")` } });
+      return;
+    }
   }
 
   const result = await callGemini(toGeminiBody(appBody));
@@ -285,6 +290,71 @@ async function handleExtractPlan(req, res) {
   sendJson(res, 200, { text });
 }
 
+/** Shared: turns [{mime,data}] into Gemini parts. Returns null (after replying) if one is not an allowed image. */
+function imageParts(res, images) {
+  const parts = [];
+  for (const img of images) {
+    let mime = String(img.mime ?? "").toLowerCase();
+    if (mime === "image/jpg") mime = "image/jpeg";
+    if (!IMAGE_MIMES.has(mime) || !img.data) {
+      sendJson(res, 400, { error: { message: `Use PNG, JPEG or WebP screenshots (got "${mime || "none"}")` } });
+      return null;
+    }
+    parts.push({ inline_data: { mime_type: mime, data: img.data } });
+  }
+  return parts;
+}
+
+async function jsonFromGemini(res, parts) {
+  const result = await callGemini({
+    contents: [{ role: "user", parts }],
+    generationConfig: { temperature: 0, responseMimeType: "application/json" },
+  });
+  if (!result.ok) {
+    sendJson(res, result.status, result.data);
+    return;
+  }
+  const text = (result.data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("").trim();
+  sendJson(res, 200, { text });
+}
+
+/** POST /v1/extract-trades - several screenshots of trade HISTORY, many trades. JSON { images }. */
+const TRADES_PROMPT = `These screenshots show a trader's CLOSED trades (MetaTrader history tab or similar). Read EVERY closed trade row you can see across all screenshots. If the same trade appears twice, list it once. Reply with JSON only: {"trades":[{"pair":string|null,"direction":"buy"|"sell"|null,"entry_price":number|null,"exit_price":number|null,"size":number|null,"profit_loss":number|null,"closed_at":string|null}]}. profit_loss is negative for a loss. Use null for anything not clearly readable. Never invent or estimate a number. Do not include open positions.`;
+
+async function handleExtractTrades(req, res) {
+  const body = JSON.parse((await readBody(req, 18 * 1024 * 1024)).toString("utf8"));
+  const images = Array.isArray(body.images) ? body.images.slice(0, 6) : [];
+  if (images.length === 0) {
+    sendJson(res, 400, { error: { message: "No images sent" } });
+    return;
+  }
+  const parts = imageParts(res, images);
+  if (!parts) return;
+  await jsonFromGemini(res, [{ text: TRADES_PROMPT }, ...parts]);
+}
+
+/** POST /v1/extract-entry - what the user said (and any screenshots) -> something to save. JSON { text, images? }. */
+function entryPrompt(text) {
+  return `You turn a trader's spoken or typed message into a journal record. Today is ${new Date().toISOString().slice(0, 10)}.
+Decide "kind":
+- "trade": a trade that is already CLOSED (has an exit price or a result) and should be logged.
+- "plan": a trade they are about to take or are in right now (entry, stop, target, reasons).
+- "note": only feelings or what happened BEFORE a trade ("phase":"before") or AFTER a trade ("phase":"after"), with no new trade.
+- "none": it is a question or chat, not something to save.
+Reply with JSON only: {"kind":..,"pair":string|null,"direction":"buy"|"sell"|null,"entry_price":number|null,"exit_price":number|null,"stop_loss":number|null,"take_profit":number|null,"size":number|null,"profit_loss":number|null,"reasons":string,"feelings":string,"phase":"before"|"after"|null,"summary":string}.
+Use null for anything not clearly said or visible. Never invent or estimate a number. Numbers from screenshots must be ones you can read. "reasons" is why they took or plan the trade; "feelings" is how they felt; copy their words, do not add advice. "summary" is one short plain sentence of what you understood.
+The user's message:
+"""${text}"""`;
+}
+
+async function handleExtractEntry(req, res) {
+  const body = JSON.parse((await readBody(req, 18 * 1024 * 1024)).toString("utf8"));
+  const images = Array.isArray(body.images) ? body.images.slice(0, 6) : [];
+  const parts = imageParts(res, images);
+  if (!parts) return;
+  await jsonFromGemini(res, [{ text: entryPrompt(String(body.text ?? "").slice(0, 6000)) }, ...parts]);
+}
+
 const server = createServer(async (req, res) => {
   cors(res);
 
@@ -298,10 +368,14 @@ const server = createServer(async (req, res) => {
       await handleChat(req, res);
     } else if (req.method === "POST" && req.url?.startsWith("/v1/transcribe")) {
       await handleTranscribe(req, res);
+    } else if (req.method === "POST" && req.url?.startsWith("/v1/extract-trades")) {
+      await handleExtractTrades(req, res);
     } else if (req.method === "POST" && req.url?.startsWith("/v1/extract-trade")) {
       await handleExtractTrade(req, res);
     } else if (req.method === "POST" && req.url?.startsWith("/v1/extract-plan")) {
       await handleExtractPlan(req, res);
+    } else if (req.method === "POST" && req.url?.startsWith("/v1/extract-entry")) {
+      await handleExtractEntry(req, res);
     } else {
       sendJson(res, 404, { error: { message: "Not found" } });
     }
@@ -317,6 +391,6 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Gemini proxy on http://localhost:${PORT} (model: ${MODEL})`);
-  console.log(`Routes: POST /v1/messages (chat), POST /v1/transcribe (voice), POST /v1/extract-trade (screenshot), POST /v1/extract-plan (several screenshots)`);
+  console.log(`Routes: POST /v1/messages (chat), POST /v1/transcribe (voice), POST /v1/extract-trade (screenshot), POST /v1/extract-plan (several screenshots), POST /v1/extract-trades (history), POST /v1/extract-entry (save from chat)`);
   console.log(`Keep EXPO_PUBLIC_CLAUDE_PROXY_URL=http://localhost:${PORT}`);
 });

@@ -18,7 +18,7 @@ import { ThemedText } from '@/components/themed-text';
 import type { Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useThemedStyles } from '@/lib/styles';
-import { transcribeRecording } from '@/lib/voice';
+import { transcribeOrQueue } from '@/lib/voice-queue';
 
 type VoiceButtonProps = {
   onText: (text: string) => void;
@@ -36,9 +36,11 @@ export function VoiceButton({ onText, disabled, label = 'Speak' }: VoiceButtonPr
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const toggle = useCallback(async () => {
     setError(null);
+    setNotice(null);
     try {
       if (recording) {
         await recorder.stop();
@@ -47,7 +49,12 @@ export function VoiceButton({ onText, disabled, label = 'Speak' }: VoiceButtonPr
           throw new Error('The recording was empty. Hold the mic a little longer.');
         }
         setBusy(true);
-        onText(await transcribeRecording(uri));
+        const result = await transcribeOrQueue(uri);
+        if (result.queued) {
+          setNotice('No internet. Saved on this device. Use "Write them out" when you are back online.');
+        } else {
+          onText(result.text);
+        }
         return;
       }
 
@@ -94,6 +101,11 @@ export function VoiceButton({ onText, disabled, label = 'Speak' }: VoiceButtonPr
           {busy ? 'Writing it down…' : recording ? 'Tap to stop' : label}
         </ThemedText>
       </Pressable>
+      {notice ? (
+        <ThemedText variant="caption" tone="textSecondary">
+          {notice}
+        </ThemedText>
+      ) : null}
       {error ? (
         <ThemedText variant="caption" tone="loss">
           {error}

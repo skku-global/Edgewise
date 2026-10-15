@@ -37,6 +37,7 @@ import {
 } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { VoiceQueueBanner } from '@/components/voice-queue-banner';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Screen, ScreenHeader } from '@/components/ui/screen';
@@ -44,10 +45,18 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/ui/state';
 import type { Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { askClaude, hasClaudeKey, type ClaudeTurn } from '@/lib/claude-client';
-import { askWithImage, pickScreenshot, type PickedImage } from '@/lib/coach-vision';
+import {
+  describeEntry,
+  extractEntry,
+  looksLikeSave,
+  missingFor,
+  saveChatEntry,
+  type ChatEntry,
+} from '@/lib/chat-save';
+import { askWithImage, pickScreenshots, type PickedImage } from '@/lib/coach-vision';
 import { useThemedStyles } from '@/lib/styles';
 import { buildTradingContext, fetchTradingContext, type ContextTrade } from '@/lib/trade-context';
-import { transcribeRecording } from '@/lib/voice';
+import { transcribeOrQueue } from '@/lib/voice-queue';
 
 /** Starter questions, so an empty chat is not a blank prompt box. */
 const SUGGESTIONS = [
@@ -57,7 +66,17 @@ const SUGGESTIONS = [
   'What should I stop doing?',
 ];
 
-type ChatMessage = ClaudeTurn & { id: string; failed?: boolean; attachment?: string };
+type PendingState = 'open' | 'saving' | 'saved' | 'discarded';
+
+type ChatMessage = ClaudeTurn & {
+  id: string;
+  failed?: boolean;
+  attachment?: string;
+  /** Something the AI understood from what you said, waiting for you to confirm it. */
+  pending?: ChatEntry;
+  pendingState?: PendingState;
+  pendingNote?: string;
+};
 
 /** Used when you attach a screenshot but type nothing. */
 const DEFAULT_IMAGE_QUESTION =
@@ -74,7 +93,7 @@ export default function ChatScreen() {
   const [sending, setSending] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [attached, setAttached] = useState<PickedImage | null>(null);
+  const [attached, setAttached] = useState<PickedImage[]>([]);
   const scrollRef = useRef<ScrollView>(null);
   const keyed = hasClaudeKey();
 
@@ -108,9 +127,13 @@ export default function ChatScreen() {
           throw new Error('The recording was empty. Hold the mic a little longer.');
         }
         setTranscribing(true);
-        const text = await transcribeRecording(uri);
-        // Add to whatever is already typed, so voice and typing can be mixed.
-        setDraft((current) => (current.trim() ? `${current.trim()} ${text}` : text));
+        const result = await transcribeOrQueue(uri);
+        if (result.queued) {
+          setVoiceError('No internet. Your recording is saved on this device. Tap "Write them out" when you are back online.');
+        } else {
+          // Add to whatever is already typed, so voice and typing can be mixed.
+          setDraft((current) => (current.trim() ? `${current.trim()} ${result.text}` : result.text));
+        }
         return;
       }
 
@@ -135,9 +158,9 @@ export default function ChatScreen() {
   const attach = useCallback(async () => {
     setVoiceError(null);
     try {
-      const picked = await pickScreenshot();
-      if (picked) {
-        setAttached(picked);
+      const picked = await pickScreenshots();
+      if (picked.length > 0) {
+        setAttached((current) => [...current, ...picked].slice(0, 6));
       }
     } catch (err) {
       console.error(err);
@@ -145,10 +168,38 @@ export default function ChatScreen() {
     }
   }, []);
 
+  const addDraft = useCallback((text: string) => {
+    setDraft((current) => (current.trim() ? `${current.trim()} ${text}` : text));
+  }, []);
+
+  const patchMessage = useCallback((id: string, patch: Partial<ChatMessage>) => {
+    setMessages((current) => current.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+  }, []);
+
+  /** Save button on a confirm card: only now does anything reach your journal. */
+  const confirmSave = useCallback(
+    async (message: ChatMessage) => {
+      if (!message.pending) return;
+      patchMessage(message.id, { pendingState: 'saving', pendingNote: undefined });
+      try {
+        const done = await saveChatEntry(message.pending);
+        patchMessage(message.id, { pendingState: 'saved', pendingNote: done });
+        loadContext();
+      } catch (err) {
+        console.error(err);
+        patchMessage(message.id, {
+          pendingState: 'open',
+          pendingNote: err instanceof Error ? err.message : 'Could not save that. Try again.',
+        });
+      }
+    },
+    [loadContext, patchMessage],
+  );
+
   const send = useCallback(
-    async (text: string) => {
-      const image = attached;
-      const question = text.trim() || (image ? DEFAULT_IMAGE_QUESTION : '');
+    async (text: string, forceSave = false) => {
+      const images = attached;
+      const question = text.trim() || (images.length > 0 ? DEFAULT_IMAGE_QUESTION : '');
       if (!question || sending || !trades) {
         return;
       }
@@ -157,7 +208,7 @@ export default function ChatScreen() {
         id: `u-${messages.length}-${question.slice(0, 12)}`,
         role: 'user',
         content: question,
-        attachment: image?.name,
+        attachment: images.length > 0 ? images.map((i) => i.name).join(', ') : undefined,
       };
       // Snapshot the history the request is built from, so a fast second send
       // can't race the state update and drop the previous turn.
@@ -170,14 +221,38 @@ export default function ChatScreen() {
 
       setMessages((current) => [...current, outgoing]);
       setDraft('');
-      setAttached(null);
+      setAttached([]);
       setSending(true);
 
       try {
+        // "Save to journal", or a message that starts with log / save / add / journal:
+        // turn it into a record and ask you to confirm. If it turns out to be a
+        // question, fall through and answer it normally.
+        if (forceSave || looksLikeSave(question)) {
+          const entry = await extractEntry(
+            text.trim() || 'Read the trade in the screenshots.',
+            images,
+          );
+          if (entry.kind !== 'none') {
+            setMessages((current) => [
+              ...current,
+              {
+                id: `p-${current.length}`,
+                role: 'assistant',
+                content: entry.summary || 'Here is what I understood. Check it, then save.',
+                pending: entry,
+                pendingState: 'open',
+              },
+            ]);
+            return;
+          }
+        }
+
         const briefing = buildTradingContext(trades);
-        const answer = image
-          ? await askWithImage(briefing, history, image)
-          : await askClaude(briefing, history);
+        const answer =
+          images.length > 0
+            ? await askWithImage(briefing, history, images)
+            : await askClaude(briefing, history);
         setMessages((current) => [
           ...current,
           {
@@ -214,7 +289,7 @@ export default function ChatScreen() {
     !sending &&
     !recording &&
     !transcribing &&
-    (draft.trim().length > 0 || !!attached);
+    (draft.trim().length > 0 || attached.length > 0);
   const canRecord = keyed && !!trades && !sending && !transcribing;
   const canAttach = keyed && !!trades && !sending;
 
@@ -286,8 +361,62 @@ export default function ChatScreen() {
               </ThemedText>
               {message.attachment ? (
                 <ThemedText variant="caption" tone="textOnFill">
-                  Screenshot: {message.attachment}
+                  Screenshots: {message.attachment}
                 </ThemedText>
+              ) : null}
+              {message.pending ? (
+                <View style={styles.confirm}>
+                  <ThemedText variant="overline" tone="textTertiary">
+                    {describeEntry(message.pending).title.toUpperCase()}
+                  </ThemedText>
+                  {describeEntry(message.pending).lines.map((line) => (
+                    <ThemedText key={line} variant="mono" tone="text">
+                      {line}
+                    </ThemedText>
+                  ))}
+                  <ThemedText variant="caption" tone="textTertiary">
+                    Check every number. AI can mishear or misread one.
+                  </ThemedText>
+                  {missingFor(message.pending) && message.pendingState === 'open' ? (
+                    <ThemedText variant="caption" tone="loss">
+                      {missingFor(message.pending)}
+                    </ThemedText>
+                  ) : null}
+                  {message.pendingNote ? (
+                    <ThemedText
+                      variant="caption"
+                      tone={message.pendingState === 'saved' ? 'gain' : 'loss'}
+                    >
+                      {message.pendingNote}
+                    </ThemedText>
+                  ) : null}
+                  {message.pendingState === 'open' || message.pendingState === 'saving' ? (
+                    <View style={styles.confirmButtons}>
+                      <Button
+                        label="Save"
+                        loading={message.pendingState === 'saving'}
+                        disabled={!!missingFor(message.pending)}
+                        onPress={() => confirmSave(message)}
+                      />
+                      <Button
+                        label="Discard"
+                        variant="secondary"
+                        disabled={message.pendingState === 'saving'}
+                        onPress={() =>
+                          patchMessage(message.id, {
+                            pendingState: 'discarded',
+                            pendingNote: 'Discarded. Nothing was saved.',
+                          })
+                        }
+                      />
+                    </View>
+                  ) : null}
+                  {message.pendingState === 'discarded' ? (
+                    <ThemedText variant="caption" tone="textSecondary">
+                      {message.pendingNote}
+                    </ThemedText>
+                  ) : null}
+                </View>
               ) : null}
             </View>
           ))}
@@ -333,19 +462,36 @@ export default function ChatScreen() {
           </View>
         ) : null}
 
-        {attached ? (
-          <View style={styles.attachedRow}>
+        {attached.map((image, index) => (
+          <View key={`${image.name}-${index}`} style={styles.attachedRow}>
             <Ionicons name="image" size={18} color={theme.color.accent} />
             <ThemedText variant="caption" tone="textSecondary" style={styles.attachedName}>
-              {attached.name}
+              {image.name}
             </ThemedText>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Remove screenshot"
-              onPress={() => setAttached(null)}
+              accessibilityLabel={`Remove ${image.name}`}
+              onPress={() => setAttached((current) => current.filter((_, i) => i !== index))}
               hitSlop={8}
             >
               <Ionicons name="close-circle" size={20} color={theme.color.textTertiary} />
+            </Pressable>
+          </View>
+        ))}
+
+        <VoiceQueueBanner onText={addDraft} />
+
+        {canSend ? (
+          <View style={styles.saveRow}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => send(draft, true)}
+              style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
+              testID="chat-save"
+            >
+              <ThemedText variant="label" tone="accentText">
+                Save this to my journal instead
+              </ThemedText>
             </Pressable>
           </View>
         ) : null}
@@ -353,7 +499,7 @@ export default function ChatScreen() {
         <View style={styles.composer}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Attach a screenshot"
+            accessibilityLabel="Attach screenshots"
             onPress={attach}
             disabled={!canAttach}
             style={({ pressed }) => [
@@ -538,5 +684,21 @@ const sheet = (t: Theme) =>
     },
     attachedName: {
       flexShrink: 1,
+    },
+    saveRow: {
+      flexDirection: 'row',
+      paddingTop: t.space.two,
+    },
+    confirm: {
+      gap: t.space.one,
+      marginTop: t.space.two,
+      paddingTop: t.space.two,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: t.color.border,
+    },
+    confirmButtons: {
+      flexDirection: 'row',
+      gap: t.space.two,
+      paddingTop: t.space.one,
     },
   });

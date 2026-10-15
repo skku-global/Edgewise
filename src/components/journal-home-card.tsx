@@ -9,8 +9,8 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { AddTradeSheet } from '@/components/add-trade-sheet';
 import { JournalEntrySheet } from '@/components/journal-entry-sheet';
-import { gradePillTone, JournalSheet } from '@/components/journal-sheet';
-
+import { HistoryImportSheet } from '@/components/history-import-sheet';
+import { gradeTone, JournalSheet } from '@/components/journal-sheet';
 import { ScreenshotTradeSheet } from '@/components/screenshot-trade-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
@@ -35,6 +35,7 @@ export function JournalHomeCard({ onChanged, onConnect }: JournalHomeCardProps) 
   const [planVisible, setPlanVisible] = useState(false);
   const [shotVisible, setShotVisible] = useState(false);
   const [handVisible, setHandVisible] = useState(false);
+  const [histVisible, setHistVisible] = useState(false);
   const [selected, setSelected] = useState<JournalEntry | null>(null);
 
   const reload = useCallback(async () => {
@@ -65,6 +66,7 @@ export function JournalHomeCard({ onChanged, onConnect }: JournalHomeCardProps) 
         <Card style={styles.card}>
           <Button label="Plan a trade (voice or text)" onPress={() => setPlanVisible(true)} />
           <Button label="Add from a screenshot" variant="secondary" onPress={() => setShotVisible(true)} />
+          <Button label="Add many trades from history screenshots" variant="secondary" onPress={() => setHistVisible(true)} />
           <Button label="Add a trade by hand" variant="secondary" onPress={() => setHandVisible(true)} />
           <Button label="Connect MetaTrader (auto-sync)" variant="secondary" onPress={onConnect} />
         </Card>
@@ -96,8 +98,7 @@ export function JournalHomeCard({ onChanged, onConnect }: JournalHomeCardProps) 
                     </ThemedText>
                   </View>
                   <Pill label={entry.direction} tone={entry.direction === 'buy' ? 'gain' : 'loss'} solid caps />
-                  {entry.grade ? <Pill label={entry.grade} tone={gradePillTone(entry.grade)} /> : null}
-
+                  {entry.grade ? <Pill label={entry.grade} tone={gradeTone(entry.grade)} /> : null}
                 </Pressable>
               </View>
             ))}
@@ -107,6 +108,7 @@ export function JournalHomeCard({ onChanged, onConnect }: JournalHomeCardProps) 
 
       <JournalSheet visible={planVisible} onClose={() => setPlanVisible(false)} onSaved={changed} />
       <ScreenshotTradeSheet visible={shotVisible} onClose={() => setShotVisible(false)} onSaved={changed} />
+      <HistoryImportSheet visible={histVisible} onClose={() => setHistVisible(false)} onSaved={changed} />
       <AddTradeSheet visible={handVisible} onClose={() => setHandVisible(false)} onSaved={changed} />
       <JournalEntrySheet entry={selected} onClose={() => setSelected(null)} onChanged={changed} />
     </View>
