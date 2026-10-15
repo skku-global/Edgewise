@@ -45,7 +45,8 @@ jest.mock('@/components/ui/account-button', () => ({ AccountButton: () => null }
  */
 const TRIGGER_STYLE = { flexDirection: 'row', justifyContent: 'space-between' } as const;
 
-const t = Themes.light;
+const t = Themes.dark;
+
 
 type PressableState = { pressed: boolean; hovered: boolean; focused: boolean };
 
