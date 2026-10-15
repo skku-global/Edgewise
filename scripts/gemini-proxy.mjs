@@ -112,12 +112,22 @@ async function callGemini(geminiBody) {
  * The only real differences: "assistant" is called "model", and text lives in parts.
  */
 function toGeminiBody(appBody) {
+  const contents = (appBody.messages ?? []).map((m) => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{ text: m.content }],
+  }));
+
+  // A screenshot attached in the Coach chat rides on the LAST user message.
+  if (appBody.image?.data) {
+    const last = contents[contents.length - 1];
+    if (last && last.role === "user") {
+      last.parts.push({ inline_data: { mime_type: appBody.image.mime, data: appBody.image.data } });
+    }
+  }
+
   return {
     systemInstruction: { parts: [{ text: appBody.system ?? "" }] },
-    contents: (appBody.messages ?? []).map((m) => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
-    })),
+    contents,
     generationConfig: { maxOutputTokens: appBody.max_tokens ?? 1000 },
   };
 }
@@ -144,7 +154,14 @@ function toAppResponse(geminiData) {
 
 /** POST /v1/messages - chat. */
 async function handleChat(req, res) {
-  const appBody = JSON.parse((await readBody(req, 2 * 1024 * 1024)).toString("utf8"));
+  // Bigger limit than before, because a screenshot can ride along as base64.
+  const appBody = JSON.parse((await readBody(req, 14 * 1024 * 1024)).toString("utf8"));
+
+  if (appBody.image && !IMAGE_MIMES.has(String(appBody.image.mime))) {
+    sendJson(res, 400, { error: { message: `Use a PNG, JPEG or WebP screenshot (got "${appBody.image.mime}")` } });
+    return;
+  }
+
   const result = await callGemini(toGeminiBody(appBody));
 
   if (!result.ok) {

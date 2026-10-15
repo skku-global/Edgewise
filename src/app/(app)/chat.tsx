@@ -44,6 +44,7 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/ui/state';
 import type { Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { askClaude, hasClaudeKey, type ClaudeTurn } from '@/lib/claude-client';
+import { askWithImage, pickScreenshot, type PickedImage } from '@/lib/coach-vision';
 import { useThemedStyles } from '@/lib/styles';
 import { buildTradingContext, fetchTradingContext, type ContextTrade } from '@/lib/trade-context';
 import { transcribeRecording } from '@/lib/voice';
@@ -56,7 +57,11 @@ const SUGGESTIONS = [
   'What should I stop doing?',
 ];
 
-type ChatMessage = ClaudeTurn & { id: string; failed?: boolean };
+type ChatMessage = ClaudeTurn & { id: string; failed?: boolean; attachment?: string };
+
+/** Used when you attach a screenshot but type nothing. */
+const DEFAULT_IMAGE_QUESTION =
+  'Look at this screenshot. Where did I enter and exit, and what stands out about this trade?';
 
 export default function ChatScreen() {
   const theme = useTheme();
@@ -69,6 +74,7 @@ export default function ChatScreen() {
   const [sending, setSending] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [attached, setAttached] = useState<PickedImage | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const keyed = hasClaudeKey();
 
@@ -125,9 +131,24 @@ export default function ChatScreen() {
     }
   }, [recorder, recording]);
 
+  /** The "+" button: pick a screenshot to send with your next message. */
+  const attach = useCallback(async () => {
+    setVoiceError(null);
+    try {
+      const picked = await pickScreenshot();
+      if (picked) {
+        setAttached(picked);
+      }
+    } catch (err) {
+      console.error(err);
+      setVoiceError(err instanceof Error ? err.message : 'Could not attach that image.');
+    }
+  }, []);
+
   const send = useCallback(
     async (text: string) => {
-      const question = text.trim();
+      const image = attached;
+      const question = text.trim() || (image ? DEFAULT_IMAGE_QUESTION : '');
       if (!question || sending || !trades) {
         return;
       }
@@ -136,6 +157,7 @@ export default function ChatScreen() {
         id: `u-${messages.length}-${question.slice(0, 12)}`,
         role: 'user',
         content: question,
+        attachment: image?.name,
       };
       // Snapshot the history the request is built from, so a fast second send
       // can't race the state update and drop the previous turn.
@@ -148,10 +170,14 @@ export default function ChatScreen() {
 
       setMessages((current) => [...current, outgoing]);
       setDraft('');
+      setAttached(null);
       setSending(true);
 
       try {
-        const answer = await askClaude(buildTradingContext(trades), history);
+        const briefing = buildTradingContext(trades);
+        const answer = image
+          ? await askWithImage(briefing, history, image)
+          : await askClaude(briefing, history);
         setMessages((current) => [
           ...current,
           {
@@ -178,12 +204,19 @@ export default function ChatScreen() {
         setSending(false);
       }
     },
-    [messages, sending, trades],
+    [attached, messages, sending, trades],
   );
 
   const loading = trades === null && loadError === null;
-  const canSend = keyed && !!trades && !sending && !recording && !transcribing && draft.trim().length > 0;
+  const canSend =
+    keyed &&
+    !!trades &&
+    !sending &&
+    !recording &&
+    !transcribing &&
+    (draft.trim().length > 0 || !!attached);
   const canRecord = keyed && !!trades && !sending && !transcribing;
+  const canAttach = keyed && !!trades && !sending;
 
   return (
     <Screen scroll={false}>
@@ -251,6 +284,11 @@ export default function ChatScreen() {
               >
                 {message.content}
               </ThemedText>
+              {message.attachment ? (
+                <ThemedText variant="caption" tone="textOnFill">
+                  Screenshot: {message.attachment}
+                </ThemedText>
+              ) : null}
             </View>
           ))}
 
@@ -295,7 +333,38 @@ export default function ChatScreen() {
           </View>
         ) : null}
 
+        {attached ? (
+          <View style={styles.attachedRow}>
+            <Ionicons name="image" size={18} color={theme.color.accent} />
+            <ThemedText variant="caption" tone="textSecondary" style={styles.attachedName}>
+              {attached.name}
+            </ThemedText>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Remove screenshot"
+              onPress={() => setAttached(null)}
+              hitSlop={8}
+            >
+              <Ionicons name="close-circle" size={20} color={theme.color.textTertiary} />
+            </Pressable>
+          </View>
+        ) : null}
+
         <View style={styles.composer}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Attach a screenshot"
+            onPress={attach}
+            disabled={!canAttach}
+            style={({ pressed }) => [
+              styles.plus,
+              !canAttach && styles.micDisabled,
+              pressed && styles.chipPressed,
+            ]}
+            testID="chat-attach"
+          >
+            <Ionicons name="add" size={26} color={theme.color.text} />
+          </Pressable>
           <TextInput
             style={styles.input}
             value={draft}
@@ -450,5 +519,24 @@ const sheet = (t: Theme) =>
     },
     micDisabled: {
       opacity: 0.4,
+    },
+    plus: {
+      width: 44,
+      height: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: t.radius.lg,
+      borderWidth: 1,
+      borderColor: t.color.borderStrong,
+      backgroundColor: t.color.bgSunken,
+    },
+    attachedRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.space.two,
+      paddingTop: t.space.two,
+    },
+    attachedName: {
+      flexShrink: 1,
     },
   });
