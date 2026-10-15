@@ -143,10 +143,7 @@ const sheet = (t: Theme) =>
       flex: 1,
     },
     hero: {
-      backgroundColor: t.color.hero,
-      borderRadius: t.radius.xl,
-      paddingHorizontal: t.space.four,
-      paddingVertical: t.space.four,
+      paddingVertical: t.space.two,
     },
     heroRow: {
       flexDirection: 'row',

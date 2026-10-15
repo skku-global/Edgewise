@@ -51,7 +51,7 @@ const sheet = (t: Theme) =>
     pill: {
       paddingHorizontal: t.space.two,
       paddingVertical: t.space.half,
-      borderRadius: t.radius.pill,
+      borderRadius: t.radius.sm,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: 'transparent',
       alignSelf: 'flex-start',

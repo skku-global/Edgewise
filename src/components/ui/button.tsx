@@ -117,7 +117,7 @@ export const Button = forwardRef<View, ButtonProps>(function Button(
 });
 
 const labelTone: Record<ButtonVariant, TextTone> = {
-  primary: 'textOnFill',
+  primary: 'text',
   secondary: 'text',
   ghost: 'accentText',
   danger: 'textOnFill',
@@ -130,7 +130,7 @@ const labelTone: Record<ButtonVariant, TextTone> = {
  * nearly invisible.
  */
 const spinnerTone: Record<ButtonVariant, 'textOnFill' | 'text' | 'accent'> = {
-  primary: 'textOnFill',
+  primary: 'text',
   secondary: 'text',
   ghost: 'accent',
   danger: 'textOnFill',
@@ -157,8 +157,8 @@ const sheet = (t: Theme) =>
     lg: { height: 54, paddingHorizontal: t.space.four },
 
     primary: {
-      backgroundColor: t.color.accent,
-      ...t.elevation[1],
+      backgroundColor: '#6FE3A8',
+      borderColor: '#4FC98C',
     },
     secondary: {
       backgroundColor: t.color.surface,
@@ -169,7 +169,6 @@ const sheet = (t: Theme) =>
     },
     danger: {
       backgroundColor: t.color.loss,
-      ...t.elevation[1],
     },
     inert: {
       // Low enough to read as unavailable, high enough that the label is still

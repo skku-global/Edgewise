@@ -14,10 +14,12 @@
  *     with no mood in the first place.
  */
 
+import * as DocumentPicker from 'expo-document-picker';
 import { useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
 
 import { MoodPicker } from '@/components/mood-picker';
+import { VoiceButton } from '@/components/voice-button';
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
 import { Card, SectionHeader } from '@/components/ui/card';
@@ -26,6 +28,7 @@ import { Field } from '@/components/ui/field';
 import { Sheet } from '@/components/ui/sheet';
 import type { Theme } from '@/constants/theme';
 import { formatSigned } from '@/lib/format';
+import { extractTradeFromImage } from '@/lib/journal';
 import type { MoodValue } from '@/lib/moods';
 import { readMotionFlag } from '@/lib/motion-sensor';
 import { SETUP_TYPES } from '@/lib/setup-types';
@@ -101,6 +104,9 @@ export function AddTradeSheet({ visible, onClose, onSaved }: AddTradeSheetProps)
   const [errors, setErrors] = useState<Errors>({});
   const [submitting, setSubmitting] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [scanNote, setScanNote] = useState<string | null>(null);
 
   const [savedTradeId, setSavedTradeId] = useState<number | null>(null);
   const [savedPl, setSavedPl] = useState<number | null>(null);
@@ -127,6 +133,37 @@ export function AddTradeSheet({ visible, onClose, onSaved }: AddTradeSheetProps)
     // Clear just this field's error, so fixing one input does not blank the
     // messages still pointing at the others.
     setErrors((current) => (current[key] ? { ...current, [key]: undefined } : current));
+  };
+
+  const handleScan = async () => {
+    setScanError(null);
+    setScanNote(null);
+    try {
+      const picked = await DocumentPicker.getDocumentAsync({
+        type: ['image/png', 'image/jpeg', 'image/webp'],
+        copyToCacheDirectory: true,
+      });
+      if (picked.canceled || !picked.assets?.[0]) {
+        return;
+      }
+      const asset = picked.assets[0];
+      setScanning(true);
+      const found = await extractTradeFromImage(asset.uri, asset.mimeType ?? undefined);
+      setForm((current) => ({
+        ...current,
+        pair: found.pair ?? current.pair,
+        direction: found.direction ?? current.direction,
+        entry_price: found.entry_price !== null ? String(found.entry_price) : current.entry_price,
+        exit_price: found.exit_price !== null ? String(found.exit_price) : current.exit_price,
+        size: found.size !== null ? String(found.size) : current.size,
+        notes: found.notes ?? current.notes,
+      }));
+      setScanNote('Read from your screenshot. Check every number before saving.');
+    } catch (err) {
+      setScanError(err instanceof Error ? err.message : 'Could not read that screenshot.');
+    } finally {
+      setScanning(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -292,6 +329,29 @@ export function AddTradeSheet({ visible, onClose, onSaved }: AddTradeSheetProps)
           </View>
         ) : (
           <View style={styles.form}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+              <Button
+                label="Scan a screenshot"
+                variant="secondary"
+                size="sm"
+                loading={scanning}
+                onPress={handleScan}
+              />
+              <VoiceButton
+                label="Dictate notes"
+                onText={(text) => set('notes', form.notes ? form.notes + ' ' + text : text)}
+              />
+            </View>
+            {scanNote ? (
+              <ThemedText variant="caption" tone="textSecondary">
+                {scanNote}
+              </ThemedText>
+            ) : null}
+            {scanError ? (
+              <ThemedText variant="caption" tone="loss">
+                {scanError}
+              </ThemedText>
+            ) : null}
             <Field
               label="Pair"
               value={form.pair}

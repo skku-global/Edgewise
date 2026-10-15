@@ -23,7 +23,7 @@ import { Card, SectionHeader } from '@/components/ui/card';
 import { Pill } from '@/components/ui/pill';
 import { PositionBar } from '@/components/ui/position-bar';
 import { Screen, ScreenHeader } from '@/components/ui/screen';
-import { Stat, toneFor } from '@/components/ui/stat';
+import { toneFor } from '@/components/ui/stat';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/state';
 import type { Theme } from '@/constants/theme';
 import { buildEquitySeries, useTrades } from '@/hooks/use-trades';
@@ -62,6 +62,12 @@ export default function DashboardScreen() {
   const recent = trades.slice(0, RECENT_TRADE_LIMIT);
   const derivedCount = trades.filter((trade) => trade.derived).length;
   const insight = analyzeMoodPatterns(trades);
+  const grossWin = trades.filter((trade) => trade.pl > 0).reduce((sum, trade) => sum + trade.pl, 0);
+  const grossLoss = Math.abs(
+    trades.filter((trade) => trade.pl < 0).reduce((sum, trade) => sum + trade.pl, 0),
+  );
+  const profitFactor = grossLoss > 0 ? grossWin / grossLoss : null;
+  const avgTrade = trades.length > 0 ? equity / trades.length : 0;
   const maxAbs = trades.reduce((max, trade) => Math.max(max, Math.abs(trade.pl)), 0);
 
   return (
@@ -140,19 +146,46 @@ export default function DashboardScreen() {
             </Pressable>
           ) : null}
 
-          <View style={styles.statRow}>
-            <Stat
-              label="Win rate"
-              value={`${winRate.toFixed(0)}%`}
-              caption={`${wins} of ${trades.length} profitable`}
-            />
-            <Stat
-              label="Net P/L"
-              value={formatSigned(equity)}
-              caption="Sum of profit and loss"
+          <View style={styles.heroNumber}>
+            <ThemedText variant="label" tone="textSecondary">
+              Net P/L, all time
+            </ThemedText>
+            <ThemedText
+              variant="display"
               tone={toneFor(equity)}
-            />
+              style={{ fontSize: 44, lineHeight: 50, letterSpacing: -1.5 }}
+            >
+              {formatSigned(equity)}
+            </ThemedText>
+            <ThemedText variant="body" tone="textSecondary">
+              {trades.length} trades · {winRate.toFixed(0)}% win rate
+            </ThemedText>
           </View>
+
+          <Card style={styles.statStrip}>
+            <View style={styles.statCell}>
+              <ThemedText variant="caption" tone="textTertiary">
+                Win rate
+              </ThemedText>
+              <ThemedText variant="monoLg">{winRate.toFixed(0)}%</ThemedText>
+            </View>
+            <View style={styles.statCell}>
+              <ThemedText variant="caption" tone="textTertiary">
+                Profit factor
+              </ThemedText>
+              <ThemedText variant="monoLg">
+                {profitFactor === null ? '-' : profitFactor.toFixed(2)}
+              </ThemedText>
+            </View>
+            <View style={styles.statCell}>
+              <ThemedText variant="caption" tone="textTertiary">
+                Avg trade
+              </ThemedText>
+              <ThemedText variant="monoLg" tone={toneFor(avgTrade)}>
+                {formatSigned(avgTrade)}
+              </ThemedText>
+            </View>
+          </Card>
 
           <View>
             <SectionHeader
@@ -328,6 +361,18 @@ const sheet = (t: Theme) =>
     },
     pressed: {
       opacity: 0.7,
+    },
+    heroNumber: {
+      gap: t.space.half,
+      paddingVertical: t.space.one,
+    },
+    statStrip: {
+      flexDirection: 'row',
+      gap: t.space.three,
+    },
+    statCell: {
+      flex: 1,
+      gap: t.space.half,
     },
     statRow: {
       flexDirection: 'row',

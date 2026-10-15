@@ -112,38 +112,38 @@ export type ColorTokens = {
 };
 
 const lightColors: ColorTokens = {
-  bg: '#EEF2EE',
-  bgSunken: '#E6ECE7',
-  surface: '#F8FAF8',
+  bg: '#F6F8F7',
+  bgSunken: '#EEF2EF',
+  surface: '#FFFFFF',
   surfaceRaised: '#FFFFFF',
-  surfaceActive: '#E3EAE4',
+  surfaceActive: '#EEF4F0',
 
-  hero: '#0F1A14',
-  heroText: '#E8F1EC',
-  heroMuted: '#8FA699',
-  scrim: 'rgba(10, 18, 16, 0.55)',
+  hero: '#FFFFFF',
+  heroText: '#0F1A14',
+  heroMuted: '#5E7066',
+  scrim: 'rgba(10, 18, 16, 0.45)',
 
   text: '#0F1A14',
   textSecondary: '#4D6055',
-  textTertiary: '#76867C',
+  textTertiary: '#667569',
   textOnFill: '#FFFFFF',
 
   accent: '#0F7A45',
   accentText: '#0B6638',
-  accentSoft: '#DDEBE2',
+  accentSoft: '#E4F1E9',
 
   gain: '#0F7A45',
-  gainSoft: '#DDEBE2',
-  loss: '#C0453D',
-  lossSoft: '#F6E3E1',
+  gainSoft: '#E4F1E9',
+  loss: '#B8403A',
+  lossSoft: '#F8E8E6',
   neutral: '#B4C2B9',
 
-  border: '#DDE5DF',
-  borderStrong: '#C9D5CD',
+  border: '#E4EAE6',
+  borderStrong: '#CFDAD3',
   focus: '#2DB874',
 
-  chartGrid: '#E3EAE4',
-  chartAxis: '#C9D5CD',
+  chartGrid: '#EDF2EE',
+  chartAxis: '#CFDAD3',
 };
 
 /**

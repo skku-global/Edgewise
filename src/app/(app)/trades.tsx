@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Dropdown } from '@/components/ui/dropdown';
 import { Pill } from '@/components/ui/pill';
+import { PositionBar } from '@/components/ui/position-bar';
 import { Screen, ScreenHeader } from '@/components/ui/screen';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/state';
 import type { Theme } from '@/constants/theme';
@@ -112,6 +113,7 @@ export default function TradesScreen() {
 
   const netPl = rows.reduce((sum, row) => sum + row.pl, 0);
   const narrowed = rows.length !== trades.length;
+  const maxAbs = trades.reduce((max, trade) => Math.max(max, Math.abs(trade.pl)), 0);
 
   const toggleSort = (key: SortKey) => setSort((current) => nextSortState(current, key));
 
@@ -212,6 +214,7 @@ export default function TradesScreen() {
                   sort={sort}
                   onPress={toggleSort}
                 />
+                <ColumnLabel label="Result" style={styles.colBar} />
                 <ColumnLabel label="Setup" style={styles.colSetup} />
                 <ColumnLabel label="Mood" style={styles.colMood} />
               </View>
@@ -227,6 +230,7 @@ export default function TradesScreen() {
                     trade={trade}
                     onPress={setSelected}
                     onSetupChange={handleSetupChange}
+                    max={maxAbs}
                   />
                 ))
               )}
@@ -300,8 +304,10 @@ function TableRow({
   trade,
   onPress,
   onSetupChange,
+  max,
 }: {
   trade: TradeRow;
+  max: number;
   onPress: (trade: TradeRow) => void;
   onSetupChange: (trade: TradeRow, setup: string | null) => void;
 }) {
@@ -352,6 +358,10 @@ function TableRow({
         <ThemedText variant="mono" tone={trade.pl >= 0 ? 'gain' : 'loss'}>
           {formatSigned(trade.pl)}
         </ThemedText>
+      </View>
+
+      <View style={styles.colBar}>
+        <PositionBar value={trade.pl} max={max} />
       </View>
 
       {needsSetup ? (
@@ -451,6 +461,7 @@ const sheet = (t: Theme) =>
     colPair: { width: 96 },
     colDirection: { width: 64 },
     colPl: { width: 88 },
+    colBar: { width: 104, paddingRight: t.space.three, justifyContent: 'center' },
     colSetup: { width: 132 },
     colMood: { width: 132 },
   });
