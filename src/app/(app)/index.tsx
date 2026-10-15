@@ -68,12 +68,6 @@ export default function DashboardScreen() {
   );
   const profitFactor = grossLoss > 0 ? grossWin / grossLoss : null;
   const avgTrade = trades.length > 0 ? equity / trades.length : 0;
-  const grossWin = trades.filter((trade) => trade.pl > 0).reduce((sum, trade) => sum + trade.pl, 0);
-  const grossLoss = Math.abs(
-    trades.filter((trade) => trade.pl < 0).reduce((sum, trade) => sum + trade.pl, 0),
-  );
-  const profitFactor = grossLoss > 0 ? grossWin / grossLoss : null;
-  const avgTrade = trades.length > 0 ? equity / trades.length : 0;
   const maxAbs = trades.reduce((max, trade) => Math.max(max, Math.abs(trade.pl)), 0);
 
   return (
@@ -367,18 +361,6 @@ const sheet = (t: Theme) =>
     },
     pressed: {
       opacity: 0.7,
-    },
-    heroNumber: {
-      gap: t.space.half,
-      paddingVertical: t.space.one,
-    },
-    statStrip: {
-      flexDirection: 'row',
-      gap: t.space.three,
-    },
-    statCell: {
-      flex: 1,
-      gap: t.space.half,
     },
     heroNumber: {
       gap: t.space.half,

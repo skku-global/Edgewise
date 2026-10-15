@@ -22,7 +22,6 @@ import { Card } from '@/components/ui/card';
 import { Dropdown } from '@/components/ui/dropdown';
 import { Pill } from '@/components/ui/pill';
 import { PositionBar } from '@/components/ui/position-bar';
-import { PositionBar } from '@/components/ui/position-bar';
 import { Screen, ScreenHeader } from '@/components/ui/screen';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/state';
 import type { Theme } from '@/constants/theme';
@@ -114,7 +113,6 @@ export default function TradesScreen() {
 
   const netPl = rows.reduce((sum, row) => sum + row.pl, 0);
   const narrowed = rows.length !== trades.length;
-  const maxAbs = trades.reduce((max, trade) => Math.max(max, Math.abs(trade.pl)), 0);
   const maxAbs = trades.reduce((max, trade) => Math.max(max, Math.abs(trade.pl)), 0);
 
   const toggleSort = (key: SortKey) => setSort((current) => nextSortState(current, key));
@@ -217,7 +215,6 @@ export default function TradesScreen() {
                   onPress={toggleSort}
                 />
                 <ColumnLabel label="Result" style={styles.colBar} />
-                <ColumnLabel label="Result" style={styles.colBar} />
                 <ColumnLabel label="Setup" style={styles.colSetup} />
                 <ColumnLabel label="Mood" style={styles.colMood} />
               </View>
@@ -233,7 +230,6 @@ export default function TradesScreen() {
                     trade={trade}
                     onPress={setSelected}
                     onSetupChange={handleSetupChange}
-                    max={maxAbs}
                     max={maxAbs}
                   />
                 ))
@@ -368,10 +364,6 @@ function TableRow({
         <PositionBar value={trade.pl} max={max} />
       </View>
 
-      <View style={styles.colBar}>
-        <PositionBar value={trade.pl} max={max} />
-      </View>
-
       {needsSetup ? (
         <View style={styles.colSetup}>
           <Dropdown
@@ -469,7 +461,6 @@ const sheet = (t: Theme) =>
     colPair: { width: 96 },
     colDirection: { width: 64 },
     colPl: { width: 88 },
-    colBar: { width: 104, paddingRight: t.space.three, justifyContent: 'center' },
     colBar: { width: 104, paddingRight: t.space.three, justifyContent: 'center' },
     colSetup: { width: 132 },
     colMood: { width: 132 },
