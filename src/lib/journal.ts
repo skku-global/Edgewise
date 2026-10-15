@@ -14,7 +14,9 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { getEffectiveProxyUrl } from '@/lib/claude-client';
 import { supabase } from '@/lib/supabase';
+
 
 export type Direction = 'buy' | 'sell';
 export type EntryStatus = 'planned' | 'open' | 'closed';
@@ -186,12 +188,13 @@ export function capGrade(grade: string, flags: string[]): string {
 /* ------------------------------------------------------------------ */
 
 function proxyBase(): string {
-  const base = (process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL ?? '').trim().replace(/\/+$/, '');
+  const base = getEffectiveProxyUrl().replace(/\/+$/, '');
   if (!base) {
     throw new Error('The AI proxy is not set. Set EXPO_PUBLIC_CLAUDE_PROXY_URL and restart the app.');
   }
   return base;
 }
+
 
 function errorMessage(raw: string): string | null {
   try {

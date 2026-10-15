@@ -15,13 +15,16 @@
 
 import { Platform } from 'react-native';
 
+import { getEffectiveProxyUrl } from '@/lib/claude-client';
+
 /** Turns the file recorded at `uri` into text. Throws a readable message on failure. */
 export async function transcribeRecording(uri: string): Promise<string> {
-  const proxy = (process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL ?? '').trim();
+  const proxy = getEffectiveProxyUrl();
   if (!proxy) {
     // Voice needs the proxy because the proxy is what holds the Gemini key.
     throw new Error('Voice needs the proxy. Set EXPO_PUBLIC_CLAUDE_PROXY_URL and restart the app.');
   }
+
 
   // Read the recorded file from the phone into a Blob (raw bytes).
   const fileResponse = await fetch(uri);
