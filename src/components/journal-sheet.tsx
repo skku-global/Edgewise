@@ -75,11 +75,18 @@ function toNumber(raw: string): number | null | 'bad' {
   return Number.isFinite(value) && value > 0 ? value : 'bad';
 }
 
-export function gradeTone(grade: string | null): 'gain' | 'neutral' | 'loss' {
+export function gradeTone(grade: string | null): 'gain' | 'textSecondary' | 'loss' {
+  if (grade === 'A+' || grade === 'A' || grade === 'B+') return 'gain';
+  if (grade === 'B' || grade === 'C+') return 'textSecondary';
+  return 'loss';
+}
+
+export function gradePillTone(grade: string | null): 'gain' | 'neutral' | 'loss' {
   if (grade === 'A+' || grade === 'A' || grade === 'B+') return 'gain';
   if (grade === 'B' || grade === 'C+') return 'neutral';
   return 'loss';
 }
+
 
 export function JournalSheet({ visible, onClose, onSaved }: JournalSheetProps) {
   const styles = useThemedStyles(sheet);

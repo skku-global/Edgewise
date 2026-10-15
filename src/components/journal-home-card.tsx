@@ -9,7 +9,8 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { AddTradeSheet } from '@/components/add-trade-sheet';
 import { JournalEntrySheet } from '@/components/journal-entry-sheet';
-import { gradeTone, JournalSheet } from '@/components/journal-sheet';
+import { gradePillTone, JournalSheet } from '@/components/journal-sheet';
+
 import { ScreenshotTradeSheet } from '@/components/screenshot-trade-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
@@ -95,7 +96,8 @@ export function JournalHomeCard({ onChanged, onConnect }: JournalHomeCardProps) 
                     </ThemedText>
                   </View>
                   <Pill label={entry.direction} tone={entry.direction === 'buy' ? 'gain' : 'loss'} solid caps />
-                  {entry.grade ? <Pill label={entry.grade} tone={gradeTone(entry.grade)} /> : null}
+                  {entry.grade ? <Pill label={entry.grade} tone={gradePillTone(entry.grade)} /> : null}
+
                 </Pressable>
               </View>
             ))}
