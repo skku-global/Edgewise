@@ -500,6 +500,12 @@ export async function extractTradeFromImage(uri: string, mimeHint?: string): Pro
     throw new Error('Sign in again to scan screenshots.');
   }
 
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) {
+    throw new Error('Sign in again to scan screenshots.');
+  }
+
   // STEP 1-4: endpoint, method, headers (the image type), body (the bytes)
   const response = await fetch(proxyBase() + '/v1/extract-trade', {
     method: 'POST',
