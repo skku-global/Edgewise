@@ -102,11 +102,11 @@ export const Button = forwardRef<View, ButtonProps>(function Button(
         {...rest}
       >
         {loading ? (
-          <ActivityIndicator size="small" color={theme.color[spinnerTone[variant]]} />
+          <ActivityIndicator size="small" color={theme.color[spinnerToneFor(variant, theme.scheme)]} />
         ) : (
           <>
             {leading}
-            <ThemedText variant={size === 'sm' ? 'label' : 'subheading'} tone={labelTone[variant]}>
+            <ThemedText variant={size === 'sm' ? 'label' : 'subheading'} tone={labelToneFor(variant, theme.scheme)}>
               {label}
             </ThemedText>
           </>
@@ -156,10 +156,9 @@ const sheet = (t: Theme) =>
     md: { height: 44, paddingHorizontal: t.space.four },
     lg: { height: 54, paddingHorizontal: t.space.four },
 
-    primary: {
-      backgroundColor: '#6FE3A8',
-      borderColor: '#4FC98C',
-    },
+    primary: t.scheme === 'dark'
+      ? { backgroundColor: t.color.accent, ...t.elevation[1] }
+      : { backgroundColor: '#6FE3A8', borderColor: '#4FC98C' },
     secondary: {
       backgroundColor: t.color.surface,
       borderColor: t.color.borderStrong,
@@ -169,6 +168,7 @@ const sheet = (t: Theme) =>
     },
     danger: {
       backgroundColor: t.color.loss,
+      ...(t.scheme === 'dark' ? t.elevation[1] : {}),
     },
     inert: {
       // Low enough to read as unavailable, high enough that the label is still
@@ -176,3 +176,9 @@ const sheet = (t: Theme) =>
       opacity: 0.45,
     },
   });
+
+// Dark design keeps the original primary label colour; the white design uses the new one.
+const labelToneFor = (v: ButtonVariant, scheme: string): TextTone =>
+  v === 'primary' && scheme === 'dark' ? 'textOnFill' : labelTone[v];
+const spinnerToneFor = (v: ButtonVariant, scheme: string): 'textOnFill' | 'text' | 'accent' =>
+  v === 'primary' && scheme === 'dark' ? 'textOnFill' : spinnerTone[v];

@@ -7,6 +7,7 @@ import { colors } from './theme';
 import { hovered } from './ui';
 import { useLoop } from './motion';
 import HamburgerMenu from './menu';
+import { ModeButton } from './mode-switch';
 
 // WIRE: replace with the signed-in user's initials
 const INITIALS = 'CM';
@@ -79,14 +80,15 @@ function Header({ path, wide }: { path: string; wide: boolean }) {
 
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         {wide ? null : <HamburgerMenu tabs={TABS} path={path} isActive={isActive} initials={INITIALS} />}
+        {wide ? <ModeButton /> : null}
         {wide ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Account"
-          style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' }}
-        >
-          <Text style={{ color: '#FFFFFF', fontWeight: '600' }}>{INITIALS}</Text>
-        </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Account"
+            style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Text style={{ color: '#FFFFFF', fontWeight: '600' }}>{INITIALS}</Text>
+          </Pressable>
         ) : null}
       </View>
     </View>

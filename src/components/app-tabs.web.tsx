@@ -397,7 +397,7 @@ const navSheet = (t: Theme) =>
     link: {
       paddingVertical: t.space.two,
       paddingHorizontal: t.space.three,
-      borderRadius: t.radius.md,
+      borderRadius: t.scheme === 'dark' ? t.radius.pill : t.radius.md,
       backgroundColor: 'transparent',
     },
     linkHovered: {
@@ -415,7 +415,7 @@ const navSheet = (t: Theme) =>
       gap: t.space.one,
       paddingVertical: t.space.one,
       paddingHorizontal: t.space.three,
-      borderRadius: t.radius.md,
+      borderRadius: t.scheme === 'dark' ? t.radius.pill : t.radius.md,
       borderWidth: 1,
       borderColor: t.color.border,
       backgroundColor: 'transparent',
@@ -519,6 +519,7 @@ const navSheet = (t: Theme) =>
       alignItems: 'center',
       justifyContent: 'center',
       zIndex: 90,
+      ...(t.scheme === 'dark' ? t.elevation[3] : {}),
     },
     fabPressed: {
       opacity: 0.85,

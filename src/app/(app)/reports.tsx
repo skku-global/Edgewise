@@ -1,7 +1,10 @@
+import ClassicReports from '../../classic/reports-screen';
 import ReportsScreen from '../../design/reports-screen';
+import { useDesignMode } from '../../design/mode';
 
-// WIRE: pass net, winRate, profitFactor, growth, bySetup, byMood, insight
-// from .redesign-backup/reports.tsx.bak
-export default function Reports() {
-  return <ReportsScreen />;
+// Dark design: the original screen (src/classic). White design: the new screen (src/design).
+// WIRE: the white screen still needs its data props, see .redesign-backup/reports.tsx.bak
+export default function ReportsRoute() {
+  const { mode } = useDesignMode();
+  return mode === 'dark' ? <ClassicReports /> : <ReportsScreen />;
 }

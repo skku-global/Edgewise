@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, ease, native } from './theme';
 import { useReducedMotion } from './motion';
+import { useDesignMode } from './mode';
 
 export type MenuTab = { label: string; href: string };
 
@@ -24,6 +25,7 @@ export default function HamburgerMenu({
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
   const reduce = useReducedMotion();
+  const { setMode } = useDesignMode();
   const t = useRef(new Animated.Value(0)).current;
 
   const show = () => {
@@ -120,7 +122,25 @@ export default function HamburgerMenu({
               );
             })}
           </View>
-        <Pressable
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Switch to the dark design"
+            onPress={() => hide(() => setMode('dark'))}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              paddingVertical: 14,
+              borderTopWidth: 1,
+              borderTopColor: '#2A312D',
+            }}
+          >
+            <Ionicons name="moon-outline" size={22} color={colors.mint} />
+            <Text style={{ fontSize: 17, color: '#FFFFFF' }}>Switch to dark design</Text>
+          </Pressable>
+
+          <Pressable
             accessibilityRole="button"
             accessibilityLabel="Account"
             style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 16 }}
