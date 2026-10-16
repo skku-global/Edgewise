@@ -4,18 +4,19 @@ import { usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from './theme';
-import { IconName, hovered } from './ui';
+import { hovered } from './ui';
 import { useLoop } from './motion';
+import HamburgerMenu from './menu';
 
 // WIRE: replace with the signed-in user's initials
 const INITIALS = 'CM';
 
-const TABS: { label: string; short: string; href: string; icon: IconName }[] = [
-  { label: 'Dashboard', short: 'Home', href: '/', icon: 'home-outline' },
-  { label: 'Trades', short: 'Trades', href: '/trades', icon: 'swap-vertical-outline' },
-  { label: 'Calendar', short: 'Calendar', href: '/calendar', icon: 'calendar-outline' },
-  { label: 'Reports', short: 'Reports', href: '/reports', icon: 'bar-chart-outline' },
-  { label: 'Coach', short: 'Coach', href: '/chat', icon: 'chatbubble-ellipses-outline' },
+const TABS: { label: string; href: string }[] = [
+  { label: 'Dashboard', href: '/' },
+  { label: 'Trades', href: '/trades' },
+  { label: 'Calendar', href: '/calendar' },
+  { label: 'Reports', href: '/reports' },
+  { label: 'Coach', href: '/chat' },
 ];
 
 const isActive = (path: string, href: string) =>
@@ -76,63 +77,15 @@ function Header({ path, wide }: { path: string; wide: boolean }) {
         </View>
       ) : null}
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Account"
-        style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' }}
-      >
-        <Text style={{ color: '#FFFFFF', fontWeight: '600' }}>{INITIALS}</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function Dock({ path }: { path: string }) {
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
-  return (
-    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: insets.bottom + 12, alignItems: 'center' }}>
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 4,
-          padding: 6,
-          borderRadius: 999,
-          backgroundColor: colors.card,
-          borderWidth: 1,
-          borderColor: colors.border,
-          shadowColor: '#101412',
-          shadowOpacity: 0.12,
-          shadowRadius: 20,
-          shadowOffset: { width: 0, height: 8 },
-          elevation: 8,
-        }}
-      >
-        {TABS.map((t) => {
-          const on = isActive(path, t.href);
-          return (
-            <Pressable
-              key={t.href}
-              accessibilityRole="link"
-              accessibilityLabel={t.label}
-              accessibilityState={{ selected: on }}
-              onPress={() => router.push(t.href as never)}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 6,
-                height: 42,
-                paddingHorizontal: on ? 14 : 11,
-                borderRadius: 999,
-                backgroundColor: on ? colors.ink : 'transparent',
-              }}
-            >
-              <Ionicons name={t.icon} size={20} color={on ? '#FFFFFF' : colors.muted} />
-              {on ? <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '600' }}>{t.short}</Text> : null}
-            </Pressable>
-          );
-        })}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        {wide ? null : <HamburgerMenu tabs={TABS} path={path} isActive={isActive} />}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Account"
+          style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Text style={{ color: '#FFFFFF', fontWeight: '600' }}>{INITIALS}</Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -198,8 +151,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <Header path={path} wide={wide} />
       <View style={{ flex: 1 }}>{children}</View>
-      {wide ? null : <Dock path={path} />}
-      {path === '/chat' ? null : <CoachFab bottom={wide ? 28 : insets.bottom + 84} tip={wide} />}
+      {path === '/chat' ? null : <CoachFab bottom={wide ? 28 : insets.bottom + 20} tip={wide} />}
     </View>
   );
 }

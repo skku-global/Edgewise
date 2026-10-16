@@ -22,7 +22,7 @@ export const hovered = (s: PressableStateCallbackType) =>
 
 export function Page({ children }: { children: React.ReactNode }) {
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ alignItems: 'center', paddingBottom: 170 }}>
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ alignItems: 'center', paddingBottom: 120 }}>
       <View style={{ width: '100%', maxWidth: 1120, paddingHorizontal: 20, paddingTop: 16 }}>{children}</View>
     </ScrollView>
   );
