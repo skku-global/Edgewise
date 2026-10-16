@@ -78,7 +78,8 @@ function Header({ path, wide }: { path: string; wide: boolean }) {
       ) : null}
 
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        {wide ? null : <HamburgerMenu tabs={TABS} path={path} isActive={isActive} />}
+        {wide ? null : <HamburgerMenu tabs={TABS} path={path} isActive={isActive} initials={INITIALS} />}
+        {wide ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Account"
@@ -86,6 +87,7 @@ function Header({ path, wide }: { path: string; wide: boolean }) {
         >
           <Text style={{ color: '#FFFFFF', fontWeight: '600' }}>{INITIALS}</Text>
         </Pressable>
+        ) : null}
       </View>
     </View>
   );

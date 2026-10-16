@@ -12,7 +12,9 @@ export default function HamburgerMenu({
   tabs,
   path,
   isActive,
+  initials,
 }: {
+  initials: string;
   tabs: MenuTab[];
   path: string;
   isActive: (path: string, href: string) => boolean;
@@ -118,6 +120,16 @@ export default function HamburgerMenu({
               );
             })}
           </View>
+        <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Account"
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 16 }}
+          >
+            <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ color: '#FFFFFF', fontWeight: '600' }}>{initials}</Text>
+            </View>
+            <Text style={{ fontSize: 17, color: '#FFFFFF' }}>Account</Text>
+          </Pressable>
         </Animated.View>
       </Modal>
     </>
