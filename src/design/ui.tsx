@@ -22,7 +22,7 @@ export const hovered = (s: PressableStateCallbackType) =>
 
 export function Page({ children }: { children: React.ReactNode }) {
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ alignItems: 'center', paddingBottom: 120 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ alignItems: 'center', paddingBottom: 120 }}>
       <View style={{ width: '100%', maxWidth: 1120, paddingHorizontal: 20, paddingTop: 16 }}>{children}</View>
     </ScrollView>
   );
@@ -189,7 +189,7 @@ export function OptionCard({
         <Ionicons name={icon} size={26} color={colors.green} />
         {tag ? (
           <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999, backgroundColor: colors.mintTint }}>
-            <Text style={{ fontSize: 13, fontWeight: '600', color: colors.greenDark }}>{tag}</Text>
+            <Text style={{ fontSize: 13, fontWeight: '600', color: colors.tagText }}>{tag}</Text>
           </View>
         ) : null}
       </View>

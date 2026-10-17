@@ -6,13 +6,25 @@
  * mode changes. The choice is remembered on this device.
  */
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
 import { Platform } from 'react-native';
 
 export type DesignMode = 'white' | 'dark';
 
 const KEY = 'edgewise.design.v1';
+
+/**
+ * Phone storage, loaded lazily and safely: in tests and anywhere the native
+ * module is missing, the design simply is not remembered instead of crashing.
+ */
+function storage(): { getItem(k: string): Promise<string | null>; setItem(k: string, v: string): Promise<void> } | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require('@react-native-async-storage/async-storage').default;
+  } catch {
+    return null;
+  }
+}
 
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((fn) => fn());
@@ -35,7 +47,8 @@ let mode: DesignMode = initialMode();
 
 // Phones read it asynchronously, right after start.
 if (Platform.OS !== 'web') {
-  AsyncStorage.getItem(KEY)
+  storage()
+    ?.getItem(KEY)
     .then((saved) => {
       if (saved === 'dark' && mode !== 'dark') {
         mode = 'dark';
@@ -45,13 +58,18 @@ if (Platform.OS !== 'web') {
     .catch(() => undefined);
 }
 
+/** Current mode, for code that is not a React component. */
+export function getDesignMode(): DesignMode {
+  return mode;
+}
+
 export function setDesignMode(next: DesignMode): void {
   if (next === mode) {
     return;
   }
   mode = next;
   emit();
-  AsyncStorage.setItem(KEY, next).catch(() => undefined);
+  storage()?.setItem(KEY, next).catch(() => undefined);
 }
 
 const subscribe = (fn: () => void) => {
