@@ -14,6 +14,7 @@ import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { AddTradeSheet } from '@/components/add-trade-sheet';
 import { TradeDetailSheet } from '@/components/trade-detail-sheet';
 import { Button } from '@/components/ui/button';
 import { Card, SectionHeader } from '@/components/ui/card';
@@ -43,6 +44,7 @@ export default function CalendarScreen() {
   const [monthOffset, setMonthOffset] = useState(0);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [selectedTrade, setSelectedTrade] = useState<TradeRow | null>(null);
+  const [addVisible, setAddVisible] = useState(false);
 
   const anchor = useMemo(() => {
     const now = new Date();
@@ -188,6 +190,24 @@ export default function CalendarScreen() {
               />
             }
           />
+          <Card style={styles.dayCard}>
+            <View style={styles.dayCardText}>
+              <ThemedText variant="caption" tone="textTertiary">
+                {activeDay.date.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })}
+              </ThemedText>
+              <ThemedText variant="title">
+                {activeDay.trades === 0
+                  ? 'No trades'
+                  : `${activeDay.trades} ${activeDay.trades === 1 ? 'trade' : 'trades'}`}
+              </ThemedText>
+            </View>
+            <Button
+              label="Open this day"
+              onPress={() => (dayTrades.length > 0 ? setSelectedTrade(dayTrades[0]) : setAddVisible(true))}
+              testID="open-day"
+            />
+          </Card>
+
           {dayTrades.length === 0 ? (
             <Card>
               <ThemedText variant="body" tone="textSecondary">
@@ -207,6 +227,7 @@ export default function CalendarScreen() {
         </View>
       ) : null}
 
+      <AddTradeSheet visible={addVisible} onClose={() => setAddVisible(false)} onSaved={refresh} />
       <TradeDetailSheet trade={selectedTrade} onClose={() => setSelectedTrade(null)} />
     </Screen>
   );
@@ -432,6 +453,17 @@ const sheet = (t: Theme) =>
     statRow: {
       flexDirection: 'row',
       gap: t.space.three,
+    },
+    dayCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      flexWrap: 'wrap',
+      gap: t.space.three,
+      marginBottom: t.space.two,
+    },
+    dayCardText: {
+      gap: t.space.half,
     },
     dayTrade: {
       paddingHorizontal: t.space.three,
