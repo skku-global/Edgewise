@@ -2,8 +2,8 @@ import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { View } from 'react-native';
 
-import ReportsScreen from '@/design/reports-screen';
-import { colors } from '@/design/theme';
+import ReportsScreen from '../../design/reports-screen';
+import { colors } from '../../design/theme';
 import { useTrades } from '@/hooks/use-trades';
 import { withinRange, type RangeKey } from '@/lib/date-range';
 import { displaySetup } from '@/lib/setup-types';

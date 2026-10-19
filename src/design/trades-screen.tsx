@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Text, View, useWindowDimensions } from 'react-native';
+import { Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { Button, Chip, H1, Page, Segmented, Skeleton } from './ui';
 import { Rise } from './motion';
 import { colors } from './theme';
@@ -18,14 +18,17 @@ export type TradesProps = {
   trades?: Trade[];
   onAdd?: () => void;
   onImport?: () => void;
+  onSelect?: (id: string | number) => void;
 };
 
 const HEAD = ['Date', 'Pair', 'Direction', 'Setup', 'Mood', 'Result'];
 const W = [1, 1.2, 1, 1.2, 1.2, 0.8];
 
-function Row({ cells, cols, head }: { cells: React.ReactNode[]; cols: number[]; head?: boolean }) {
+function Row({ cells, cols, head, onPress }: { cells: React.ReactNode[]; cols: number[]; head?: boolean; onPress?: () => void }) {
   return (
-    <View
+    <Pressable
+      disabled={!onPress}
+      onPress={onPress}
       style={{
         flexDirection: 'row',
         gap: 20,
@@ -41,11 +44,11 @@ function Row({ cells, cols, head }: { cells: React.ReactNode[]; cols: number[]; 
           {cells[c]}
         </View>
       ))}
-    </View>
+    </Pressable>
   );
 }
 
-export default function TradesScreen({ trades = [], onAdd, onImport }: TradesProps) {
+export default function TradesScreen({ trades = [], onAdd, onImport, onSelect }: TradesProps) {
   const { width } = useWindowDimensions();
   const cols = width < 600 ? [0, 1, 5] : [0, 1, 2, 3, 4, 5];
   const [dir, setDir] = useState('All');
@@ -93,6 +96,7 @@ export default function TradesScreen({ trades = [], onAdd, onImport }: TradesPro
             ? shown.map((t, i) => (
                 <Row
                   key={String(t.id ?? i)}
+                  onPress={onSelect && t.id !== undefined ? () => onSelect(t.id as string | number) : undefined}
                   cols={cols}
                   cells={[
                     <Text key="a" style={{ color: colors.ink }}>{t.date ?? ''}</Text>,
@@ -121,7 +125,7 @@ export default function TradesScreen({ trades = [], onAdd, onImport }: TradesPro
                 alignItems: 'center',
                 justifyContent: 'center',
                 padding: 24,
-                backgroundColor: 'rgba(255,255,255,0.93)',
+                backgroundColor: colors.card,
               }}
             >
               <Text style={{ fontSize: 28, fontWeight: '700', letterSpacing: -0.6, color: colors.ink }}>No trades yet</Text>
