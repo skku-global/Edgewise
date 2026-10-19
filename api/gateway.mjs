@@ -55,7 +55,7 @@ const CHART_RULES = [
 ].join("\n");
 
 const EXTRACT_PROMPT =
-  "This is a screenshot from MetaTrader (a trade history list, a closed trade, or an open position). " +
+  "This is a screenshot from MetaTrader or TradingView (a trade history list, a closed trade, an open position, or a chart with trade lines). " +
   "Read the single most recent or most prominent trade and return ONLY JSON with these keys: " +
   '"pair" (string such as BTCUSD, or null), "direction" ("buy" or "sell", or null), ' +
   '"entry_price" (number or null), "exit_price" (number or null), "size" (lots, number or null), ' +

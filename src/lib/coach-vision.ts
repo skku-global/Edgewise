@@ -57,7 +57,7 @@ async function toBase64(image: PickedImage): Promise<{ data: string; bytes: numb
 }
 
 function buildSystemPrompt(): string {
-  return `You are the trading coach inside the user's own trading journal app. You have a briefing of their actual trades in the first user message, followed by questions about it. The user has also attached one or more screenshots (usually MetaTrader charts, trades, or history).
+  return `You are the trading coach inside the user's own trading journal app. You have a briefing of their actual trades in the first user message, followed by questions about it. The user has also attached one or more screenshots (usually MetaTrader or TradingView charts, trades, or history).
 
 Talk like a coach: direct, plain-spoken, no fluff. Short answers, a paragraph or a few bullets. Say "I" and "you".
 

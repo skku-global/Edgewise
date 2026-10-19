@@ -45,6 +45,8 @@ type FormState = {
   exit_price: string;
   size: string;
   profit_loss: string;
+  stop_loss: string;
+  take_profit: string;
   setup_type: string | null;
   notes: string;
 };
@@ -56,6 +58,8 @@ const initialForm: FormState = {
   exit_price: '',
   size: '',
   profit_loss: '',
+  stop_loss: '',
+  take_profit: '',
   setup_type: null,
   notes: '',
 };
@@ -120,6 +124,8 @@ export function ScreenshotTradeSheet({ visible, onClose, onSaved }: ScreenshotTr
         exit_price: text(found.exit_price),
         size: text(found.size),
         profit_loss: text(found.profit_loss),
+        stop_loss: text(found.stop_loss ?? null),
+        take_profit: text(found.take_profit ?? null),
         setup_type: null,
         notes: found.notes ?? '',
       });
@@ -139,6 +145,12 @@ export function ScreenshotTradeSheet({ visible, onClose, onSaved }: ScreenshotTr
       const value = Number(form[key]);
       if (!form[key].trim()) found[key] = 'Required';
       else if (!Number.isFinite(value) || value <= 0) found[key] = 'Number above 0';
+    }
+    for (const key of ['stop_loss', 'take_profit'] as const) {
+      if (form[key].trim()) {
+        const value = Number(form[key]);
+        if (!Number.isFinite(value) || value <= 0) found[key] = 'Number above 0';
+      }
     }
     if (form.profit_loss.trim() && !Number.isFinite(Number(form.profit_loss))) {
       found.profit_loss = 'Numbers only';
@@ -170,6 +182,8 @@ export function ScreenshotTradeSheet({ visible, onClose, onSaved }: ScreenshotTr
             exit_price: exit,
             size,
             profit_loss: pl,
+            stop_loss: form.stop_loss.trim() ? Number(form.stop_loss) : null,
+            take_profit: form.take_profit.trim() ? Number(form.take_profit) : null,
             setup_type: form.setup_type,
             notes: form.notes.trim() || null,
           },
@@ -224,7 +238,7 @@ export function ScreenshotTradeSheet({ visible, onClose, onSaved }: ScreenshotTr
       subtitle={
         saved
           ? 'One question left: how did you feel?'
-          : 'Upload a MetaTrader screenshot. Check the numbers before saving.'
+          : 'Upload a MetaTrader or TradingView screenshot. Check the numbers before saving.'
       }
       footer={
         saved ? (
@@ -345,6 +359,29 @@ export function ScreenshotTradeSheet({ visible, onClose, onSaved }: ScreenshotTr
               keyboardType="decimal-pad"
               numeric
               error={errors.exit_price}
+              containerStyle={styles.flexOne}
+            />
+          </View>
+
+          <View style={styles.row}>
+            <Field
+              label="Stop loss"
+              value={form.stop_loss}
+              onChangeText={(value) => set('stop_loss', value)}
+              keyboardType="decimal-pad"
+              numeric
+              error={errors.stop_loss}
+              hint="Optional"
+              containerStyle={styles.flexOne}
+            />
+            <Field
+              label="Take profit"
+              value={form.take_profit}
+              onChangeText={(value) => set('take_profit', value)}
+              keyboardType="decimal-pad"
+              numeric
+              error={errors.take_profit}
+              hint="Optional"
               containerStyle={styles.flexOne}
             />
           </View>
