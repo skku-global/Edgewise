@@ -52,7 +52,21 @@ export default function TradesScreen({ trades = [], onAdd, onImport, onSelect }:
   const { width } = useWindowDimensions();
   const cols = width < 600 ? [0, 1, 5] : [0, 1, 2, 3, 4, 5];
   const [dir, setDir] = useState('All');
-  const shown = trades.filter((t) => dir === 'All' || (t.direction ?? '').toLowerCase() === dir.toLowerCase());
+  const [setup, setSetup] = useState('All');
+  const [mood, setMood] = useState('All');
+
+  const setups = ['All', ...Array.from(new Set(trades.map((t) => t.setup).filter(Boolean) as string[]))];
+  const moods = ['All', ...Array.from(new Set(trades.map((t) => t.mood).filter(Boolean) as string[]))];
+
+  const cycleSetup = () => setSetup((s) => setups[(setups.indexOf(s) + 1) % setups.length] ?? 'All');
+  const cycleMood = () => setMood((m) => moods[(moods.indexOf(m) + 1) % moods.length] ?? 'All');
+
+  const shown = trades.filter((t) => {
+    if (dir !== 'All' && (t.direction ?? '').toLowerCase() !== dir.toLowerCase()) return false;
+    if (setup !== 'All' && t.setup !== setup) return false;
+    if (mood !== 'All' && t.mood !== mood) return false;
+    return true;
+  });
   const widths: (number | `${number}%`)[][] = [
     ['70%', '60%', '50%', '80%', '60%', '50%'],
     ['60%', '70%', '55%', '65%', '70%', '45%'],
@@ -77,8 +91,8 @@ export default function TradesScreen({ trades = [], onAdd, onImport, onSelect }:
 
       <Rise delay={150} style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 12, marginTop: 28 }}>
         <Segmented options={['All', 'Long', 'Short']} value={dir} onChange={setDir} />
-        <Chip label="All setups" />
-        <Chip label="All moods" />
+        <Chip label={setup === 'All' ? 'All setups' : setup} onPress={cycleSetup} />
+        <Chip label={mood === 'All' ? 'All moods' : mood} onPress={cycleMood} />
       </Rise>
 
       <Rise delay={300} style={{ marginTop: 20 }}>
@@ -116,6 +130,7 @@ export default function TradesScreen({ trades = [], onAdd, onImport, onSelect }:
 
           {shown.length === 0 ? (
             <View
+              pointerEvents="box-none"
               style={{
                 position: 'absolute',
                 top: 0,

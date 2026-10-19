@@ -8,11 +8,12 @@ import { useDesignMode } from './mode';
 
 /** Small pill for the white design's wide header: switches to the dark design. */
 export function ModeButton() {
-  const { toggle } = useDesignMode();
+  const { mode, toggle } = useDesignMode();
+  const isDark = mode === 'dark';
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Switch to the dark design"
+      accessibilityLabel={isDark ? "Switch to the white design" : "Switch to the dark design"}
       onPress={toggle}
       style={{
         flexDirection: 'row',
@@ -26,8 +27,8 @@ export function ModeButton() {
         backgroundColor: colors.card,
       }}
     >
-      <Ionicons name="moon-outline" size={18} color={colors.ink} />
-      <Text style={{ fontSize: 15, color: colors.ink }}>Dark design</Text>
+      <Ionicons name={isDark ? "sunny-outline" : "moon-outline"} size={18} color={colors.ink} />
+      <Text style={{ fontSize: 15, color: colors.ink }}>{isDark ? "White design" : "Dark design"}</Text>
     </Pressable>
   );
 }

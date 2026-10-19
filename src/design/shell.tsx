@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Animated, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { AccountMenu } from '@/components/ui/account-button';
+import { initials as getInitials, useSession } from '@/lib/session';
 import { colors } from './theme';
 import { hovered } from './ui';
 import { useLoop } from './motion';
@@ -26,6 +28,9 @@ const isActive = (path: string, href: string) =>
 function Header({ path, wide }: { path: string; wide: boolean }) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { user } = useSession();
+  const [accountOpen, setAccountOpen] = useState(false);
+  const userInitials = user ? getInitials(user) : INITIALS;
   return (
     <View
       style={{
@@ -79,16 +84,20 @@ function Header({ path, wide }: { path: string; wide: boolean }) {
       ) : null}
 
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        {wide ? null : <HamburgerMenu tabs={TABS} path={path} isActive={isActive} initials={INITIALS} />}
+        {wide ? null : <HamburgerMenu tabs={TABS} path={path} isActive={isActive} initials={userInitials} />}
         {wide ? <ModeButton /> : null}
         {wide ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Account"
-            style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' }}
-          >
-            <Text style={{ color: '#FFFFFF', fontWeight: '600' }}>{INITIALS}</Text>
-          </Pressable>
+          <>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Account"
+              onPress={() => setAccountOpen(true)}
+              style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Text style={{ color: '#FFFFFF', fontWeight: '600' }}>{userInitials}</Text>
+            </Pressable>
+            <AccountMenu open={accountOpen} onClose={() => setAccountOpen(false)} />
+          </>
         ) : null}
       </View>
     </View>

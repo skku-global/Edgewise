@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, ease, native } from './theme';
 import { useReducedMotion } from './motion';
 import { useDesignMode } from './mode';
+import { AccountMenu } from '@/components/ui/account-button';
 
 export type MenuTab = { label: string; href: string };
 
@@ -21,20 +22,21 @@ export default function HamburgerMenu({
   isActive: (path: string, href: string) => boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
   const reduce = useReducedMotion();
-  const { setMode } = useDesignMode();
+  const { mode, toggle } = useDesignMode();
   const t = useRef(new Animated.Value(0)).current;
 
   const show = () => {
     setOpen(true);
-    Animated.timing(t, { toValue: 1, duration: reduce ? 200 : 700, easing: ease, useNativeDriver: native }).start();
+    Animated.timing(t, { toValue: 1, duration: reduce ? 120 : 280, easing: ease, useNativeDriver: native }).start();
   };
 
   const hide = (after?: () => void) => {
-    Animated.timing(t, { toValue: 0, duration: reduce ? 150 : 500, easing: ease, useNativeDriver: native }).start(() => {
+    Animated.timing(t, { toValue: 0, duration: reduce ? 100 : 200, easing: ease, useNativeDriver: native }).start(() => {
       setOpen(false);
       if (after) after();
     });
@@ -125,8 +127,8 @@ export default function HamburgerMenu({
 
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Switch to the dark design"
-            onPress={() => hide(() => setMode('dark'))}
+            accessibilityLabel={mode === 'dark' ? 'Switch to the white design' : 'Switch to the dark design'}
+            onPress={() => hide(toggle)}
             style={{
               flexDirection: 'row',
               alignItems: 'center',
@@ -136,13 +138,16 @@ export default function HamburgerMenu({
               borderTopColor: '#2A312D',
             }}
           >
-            <Ionicons name="moon-outline" size={22} color={colors.mint} />
-            <Text style={{ fontSize: 17, color: '#FFFFFF' }}>Switch to dark design</Text>
+            <Ionicons name={mode === 'dark' ? 'sunny-outline' : 'moon-outline'} size={22} color={colors.mint} />
+            <Text style={{ fontSize: 17, color: '#FFFFFF' }}>
+              {mode === 'dark' ? 'Switch to white design' : 'Switch to dark design'}
+            </Text>
           </Pressable>
 
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Account"
+            onPress={() => hide(() => setAccountOpen(true))}
             style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 16 }}
           >
             <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' }}>
@@ -152,6 +157,8 @@ export default function HamburgerMenu({
           </Pressable>
         </Animated.View>
       </Modal>
+
+      <AccountMenu open={accountOpen} onClose={() => setAccountOpen(false)} />
     </>
   );
 }
