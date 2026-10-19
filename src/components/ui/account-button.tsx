@@ -47,7 +47,7 @@ export function AccountButton() {
   );
 }
 
-function AccountMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function AccountMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { user, signOut } = useSession();
   const styles = useThemedStyles(sheet);
   const [confirming, setConfirming] = useState(false);

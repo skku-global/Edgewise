@@ -53,3 +53,5 @@ coverage/
 # MT5 loads it from its own Experts folder, not from here — so the source is the
 # only copy worth tracking.
 *.ex5
+
+.redesign-backup

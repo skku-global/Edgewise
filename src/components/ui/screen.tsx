@@ -142,12 +142,15 @@ const sheet = (t: Theme) =>
     fill: {
       flex: 1,
     },
-    hero: {
-      backgroundColor: t.color.hero,
-      borderRadius: t.radius.xl,
-      paddingHorizontal: t.space.four,
-      paddingVertical: t.space.four,
-    },
+    hero:
+      t.scheme === 'dark'
+        ? {
+            backgroundColor: t.color.hero,
+            borderRadius: t.radius.xl,
+            paddingHorizontal: t.space.four,
+            paddingVertical: t.space.four,
+          }
+        : { paddingVertical: t.space.two },
     heroRow: {
       flexDirection: 'row',
       alignItems: 'flex-start',

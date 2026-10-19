@@ -1,4 +1,4 @@
-oc/**
+/**
  * The web nav links lost every one of their own styles, and nothing caught it.
  *
  * ---------------------------------------------------------------------------
@@ -29,6 +29,7 @@ import { act, create, type ReactTestInstance } from 'react-test-renderer';
 
 import { NavLink } from '@/components/app-tabs.web';
 import { Themes } from '@/constants/theme';
+import { setDesignMode } from '@/design/mode';
 
 /**
  * `NavLink` shares its module with `AppTabs`, which imports `AccountButton` —
@@ -44,6 +45,9 @@ jest.mock('@/components/ui/account-button', () => ({ AccountButton: () => null }
  * the test still passes; the point is that it survives when one *is* sent.
  */
 const TRIGGER_STYLE = { flexDirection: 'row', justifyContent: 'space-between' } as const;
+
+// These links belong to the dark design, so the test runs with the dark design switched on.
+setDesignMode('dark');
 
 const t = Themes.dark;
 

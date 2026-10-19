@@ -39,14 +39,33 @@ const MAX_AUDIO_BYTES = 12 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
+// Shared chart-reading instructions (MT5 + TradingView). Added by apply-chart-rules.mjs
+const CHART_RULES = [
+  "CHART READING RULES (MetaTrader 5 and TradingView screenshots)",
+  "Goal: when the screenshot is a chart, read direction, entry, stop loss (SL) and take profit (TP) from it.",
+  "Trust evidence in this order:",
+  "1. Text labels on the chart or price scale: sl, tp, SL, TP, Stop, Target, buy, sell, a ticket like #123456 buy 0.10, buy limit, sell stop.",
+  "2. Position relative to entry: a BUY has SL below entry and TP above; a SELL has SL above entry and TP below.",
+  "3. Colour, as a hint only. Traders change colours, so never decide from colour alone.",
+  "MetaTrader 5: an open or pending order draws a dotted horizontal line at its entry price, labelled with the ticket, buy or sell, and lots. Its SL and TP are dotted horizontal lines labelled sl and tp (often red by default).",
+  "TradingView: the Long Position and Short Position tools draw two shaded zones from the entry line. Red or pink is the stop (risk) zone, green or teal is the target (reward) zone, and the entry is the line where they meet. Long: target zone above entry, stop zone below. Short: target zone below entry, stop zone above. The tool's own labels often show exact prices, so prefer them. For plain horizontal lines, use their labels first, then position, then colour.",
+  "Reading numbers: take each value from the price scale on the right edge at the height of the line or zone edge, or from an exact price printed in a label. Never estimate from pixel position alone.",
+  "Check: BUY needs SL < entry < TP; SELL needs TP < entry < SL. If the check fails, or a level is not clearly readable, use null for that field and say why in the notes. Never invent a value. If the chart shows no trade levels, leave them null.",
+  "If the screenshot is not a chart (history list, order ticket, positions tab), read the numbers printed there instead.",
+  "In a chat answer (not JSON), say plainly when a level is not clear instead of guessing.",
+].join("\n");
+
 const EXTRACT_PROMPT =
-  "This is a screenshot from MetaTrader (a trade history list, a closed trade, or an open position). " +
+  "This is a screenshot from MetaTrader or TradingView (a trade history list, a closed trade, an open position, or a chart with trade lines). " +
   "Read the single most recent or most prominent trade and return ONLY JSON with these keys: " +
   '"pair" (string such as BTCUSD, or null), "direction" ("buy" or "sell", or null), ' +
   '"entry_price" (number or null), "exit_price" (number or null), "size" (lots, number or null), ' +
   '"profit_loss" (number, negative for a loss, or null), ' +
+  '"stop_loss" (number or null), "take_profit" (number or null), ' +
   '"notes" (short string: anything unclear, and how many trades the screenshot shows). ' +
-  "Use null for anything you cannot read clearly. Never guess or invent a number.";
+  "Use null for anything you cannot read clearly. Never guess or invent a number. " +
+  "If it is a chart with trade lines, also read stop_loss and take_profit. " +
+  CHART_RULES;
 
 if (!API_KEY) {
   console.error("GEMINI_API_KEY is not set.");
@@ -129,7 +148,7 @@ function toGeminiBody(appBody) {
   }
 
   return {
-    systemInstruction: { parts: [{ text: appBody.system ?? "" }] },
+    systemInstruction: { parts: [{ text: (appBody.system ?? "") + (shots.length > 0 ? "\n\n" + CHART_RULES : "") }] },
     contents,
     generationConfig: { maxOutputTokens: appBody.max_tokens ?? 1000 },
   };
@@ -259,7 +278,9 @@ async function handleExtractTrade(req, res) {
 }
 
 /** POST /v1/extract-plan - one or several screenshots of ONE trade, as JSON { images: [{ mime, data }] }. */
-const PLAN_PROMPT = `These screenshots show ONE forex/CFD trade (chart with lines, positions tab, order ticket or history). Combine them and read: pair (symbol, e.g. XAUUSD), direction ("buy" or "sell"), entry_price, stop_loss (S/L), take_profit (T/P), size (lots), notes (one short line of anything useful). Use null for anything not clearly visible. Never invent or estimate numbers. Reply with JSON only: {"pair":..,"direction":..,"entry_price":..,"stop_loss":..,"take_profit":..,"size":..,"notes":..}`;
+const PLAN_PROMPT = `These screenshots show ONE forex/CFD trade (chart with lines, positions tab, order ticket or history). Combine them and read: pair (symbol, e.g. XAUUSD), direction ("buy" or "sell"), entry_price, stop_loss (S/L), take_profit (T/P), size (lots), notes (one short line of anything useful). Use null for anything not clearly visible. Never invent or estimate numbers.
+${CHART_RULES}
+Reply with JSON only: {"pair":..,"direction":..,"entry_price":..,"stop_loss":..,"take_profit":..,"size":..,"notes":..}`;
 
 async function handleExtractPlan(req, res) {
   const body = JSON.parse((await readBody(req, 18 * 1024 * 1024)).toString("utf8"));
@@ -342,7 +363,9 @@ Decide "kind":
 - "note": only feelings or what happened BEFORE a trade ("phase":"before") or AFTER a trade ("phase":"after"), with no new trade.
 - "none": it is a question or chat, not something to save.
 Reply with JSON only: {"kind":..,"pair":string|null,"direction":"buy"|"sell"|null,"entry_price":number|null,"exit_price":number|null,"stop_loss":number|null,"take_profit":number|null,"size":number|null,"profit_loss":number|null,"reasons":string,"feelings":string,"phase":"before"|"after"|null,"summary":string}.
-Use null for anything not clearly said or visible. Never invent or estimate a number. Numbers from screenshots must be ones you can read. "reasons" is why they took or plan the trade; "feelings" is how they felt; copy their words, do not add advice. "summary" is one short plain sentence of what you understood.
+Use null for anything not clearly said or visible. Never invent or estimate a number. Numbers from screenshots must be ones you can read.
+${CHART_RULES}
+ "reasons" is why they took or plan the trade; "feelings" is how they felt; copy their words, do not add advice. "summary" is one short plain sentence of what you understood.
 The user's message:
 """${text}"""`;
 }

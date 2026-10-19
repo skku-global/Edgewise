@@ -474,6 +474,8 @@ export type ExtractedTrade = {
   exit_price: number | null;
   size: number | null;
   profit_loss: number | null;
+  stop_loss?: number | null;
+  take_profit?: number | null;
   notes: string | null;
 };
 
@@ -518,6 +520,8 @@ export async function extractTradeFromImage(uri: string, mimeHint?: string): Pro
     exit_price: num(parsed.exit_price),
     size: num(parsed.size),
     profit_loss: num(parsed.profit_loss),
+    stop_loss: num(parsed.stop_loss),
+    take_profit: num(parsed.take_profit),
     notes: parsed.notes ? String(parsed.notes) : null,
   };
 }

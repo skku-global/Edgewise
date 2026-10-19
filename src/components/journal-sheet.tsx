@@ -583,7 +583,7 @@ export function JournalSheet({ visible, onClose, onSaved }: JournalSheetProps) {
             <SectionHeader title="Your grade" />
             <Card style={styles.resultCard}>
               <View style={styles.gradeRow}>
-                <ThemedText variant="monoXl" tone={gradeTone(outcome.grade.grade)}>
+                <ThemedText variant="monoXl" tone={(gradeTone(outcome.grade.grade) === 'neutral' ? 'textSecondary' : gradeTone(outcome.grade.grade)) as 'gain' | 'loss' | 'textSecondary'}>
                   {outcome.grade.grade}
                 </ThemedText>
                 <ThemedText variant="caption" tone="textTertiary">

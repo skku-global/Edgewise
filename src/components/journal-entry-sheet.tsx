@@ -118,7 +118,7 @@ export function JournalEntrySheet({ entry, onClose, onChanged }: JournalEntryShe
       <View style={styles.stack}>
         <Card style={styles.card}>
           <View style={styles.topRow}>
-            <ThemedText variant="monoXl" tone={gradeTone(current.grade)}>
+            <ThemedText variant="monoXl" tone={(gradeTone(current.grade) === 'neutral' ? 'textSecondary' : gradeTone(current.grade)) as 'gain' | 'loss' | 'textSecondary'}>
               {current.grade ?? '—'}
             </ThemedText>
             <Pill label={current.status} />
