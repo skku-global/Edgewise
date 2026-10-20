@@ -1,8 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { Platform, Pressable, Text } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 
-import { useTheme } from '@/hooks/use-theme';
 import { colors } from './theme';
 import { useDesignMode } from './mode';
 
@@ -33,33 +32,40 @@ export function ModeButton() {
   );
 }
 
-/** Floating pill shown only in the dark design, so there is always a way back to white. */
-export function ModeSwitchFloating() {
-  const theme = useTheme();
-  const { toggle } = useDesignMode();
+/** One sun/moon pill toggle, identical in both designs. Lives in the nav bar. */
+export function ModeToggle() {
+  const { mode, toggle } = useDesignMode();
+  const isDark = mode === 'dark';
+  const knob = (on: boolean) => ({
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    backgroundColor: on ? colors.green : 'transparent',
+  });
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Switch to the white design"
+      accessibilityLabel={isDark ? 'Switch to the white design' : 'Switch to the dark design'}
       onPress={toggle}
       style={{
-        position: 'absolute',
-        left: 16,
-        bottom: Platform.OS === 'web' ? 16 : 92,
-        zIndex: 1000,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
-        paddingVertical: 10,
-        paddingHorizontal: 14,
-        borderRadius: 999,
+        height: 40,
+        padding: 3,
+        borderRadius: 20,
         borderWidth: 1,
-        borderColor: theme.color.borderStrong,
-        backgroundColor: theme.color.surface,
+        borderColor: colors.line,
+        backgroundColor: colors.card,
       }}
     >
-      <Ionicons name="sunny-outline" size={18} color={theme.color.text} />
-      <Text style={{ fontSize: 14, color: theme.color.text }}>White design</Text>
+      <View style={knob(!isDark)}>
+        <Ionicons name="sunny" size={16} color={!isDark ? '#FFFFFF' : colors.muted} />
+      </View>
+      <View style={knob(isDark)}>
+        <Ionicons name="moon" size={15} color={isDark ? '#0A1210' : colors.muted} />
+      </View>
     </Pressable>
   );
 }

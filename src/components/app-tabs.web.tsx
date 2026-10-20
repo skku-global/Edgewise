@@ -25,7 +25,7 @@ import {
   type TabListProps,
   type TabTriggerSlotProps,
 } from 'expo-router/ui';
-import { useEffect, useState } from 'react';
+import { Children, useEffect, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -36,6 +36,8 @@ import {
 } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { ModeToggle } from '../design/mode-switch';
+import { NavFrame } from '../design/nav-frame';
 import { AccountButton } from '@/components/ui/account-button';
 import { MaxContentWidth, WebTopNavInset, type Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -144,42 +146,26 @@ type NavBarProps = TabListProps & {
 
 function NavBar({ menuOpen = false, onToggleMenu, isMobile = false, ...props }: NavBarProps) {
   const sheet = useThemedStyles(navSheet);
+  const router = useRouter();
+  const kids = Children.toArray(props.children);
 
   return (
-    <View {...props} style={[props.style, sheet.bar]}>
-      <View style={sheet.inner}>
-        <Wordmark />
-
-        {/* Desktop nav pills — kept mounted in TabList so Tabs registers routes, but hidden on mobile */}
-        <View style={isMobile ? sheet.linksHidden : sheet.links}>
-          {props.children}
-        </View>
-
-        {/* On mobile: just the logo and hamburger button. On desktop: AccountButton */}
-        {isMobile ? (
-          <MenuButton open={menuOpen} onPress={onToggleMenu} />
-        ) : (
-          <AccountButton />
-        )}
-      </View>
-    </View>
-  );
-}
-
-function Wordmark() {
-  const sheet = useThemedStyles(navSheet);
-  const { width } = useWindowDimensions();
-  // Show brand name as long as screen has at least 340px width
-  const showName = width >= 340;
-
-  return (
-    <View style={sheet.brand}>
-      <View style={sheet.mark}>
-        <ThemedText variant="label" tone="textOnFill">
-          E
-        </ThemedText>
-      </View>
-      {showName ? <ThemedText variant="heading">Edgewise</ThemedText> : null}
+    <View {...props} style={[props.style, sheet.bar, sheet.barFrame]}>
+      {/* Triggers stay mounted so Tabs registers the routes, hidden on mobile */}
+      {isMobile ? <View style={sheet.linksHidden}>{kids}</View> : null}
+      <NavFrame
+        wide={!isMobile}
+        onLogo={() => router.navigate('/' as any)}
+        linksLeft={isMobile ? null : kids.slice(0, 2)}
+        linksRight={isMobile ? null : kids.slice(2)}
+        menu={<MenuButton open={menuOpen} onPress={onToggleMenu} />}
+        tools={
+          <>
+            <ModeToggle />
+            {isMobile ? null : <AccountButton />}
+          </>
+        }
+      />
     </View>
   );
 }
@@ -363,6 +349,12 @@ const navSheet = (t: Theme) =>
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: t.color.border,
       zIndex: 100,
+    },
+    barFrame: {
+      height: 'auto' as any,
+      paddingHorizontal: 0,
+      borderBottomWidth: 0,
+      backgroundColor: 'transparent',
     },
     inner: {
       flexDirection: 'row',

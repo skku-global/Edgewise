@@ -3,7 +3,6 @@ import { Slot } from 'expo-router';
 import AppTabs from '@/components/app-tabs';
 import { TradesProvider } from '@/hooks/use-trades';
 import { useDesignMode } from '../../design/mode';
-import { ModeSwitchFloating } from '../../design/mode-switch';
 import { AppShell } from '../../design/shell';
 
 /**
@@ -17,10 +16,7 @@ export default function AppLayout() {
   return (
     <TradesProvider>
       {mode === 'dark' ? (
-        <>
-          <AppTabs />
-          <ModeSwitchFloating />
-        </>
+        <AppTabs />
       ) : (
         <AppShell>
           <Slot />

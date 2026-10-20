@@ -11,7 +11,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
@@ -127,7 +127,6 @@ export function JournalSheet({
 
   // Screenshots
   const [shots, setShots] = useState<EntryShot[]>([]);
-  const [loadingShots, setLoadingShots] = useState(false);
   const [uploadingShot, setUploadingShot] = useState(false);
 
   // Status & errors

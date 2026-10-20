@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, ease, native } from './theme';
 import { useReducedMotion } from './motion';
 import { useDesignMode } from './mode';
+import { BrandMark } from '@/components/brand-mark';
 import { AccountMenu } from '@/components/ui/account-button';
 
 export type MenuTab = { label: string; href: string };
@@ -79,9 +80,7 @@ export default function HamburgerMenu({
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <View style={{ width: 36, height: 36, borderRadius: 9, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '700' }}>E</Text>
-              </View>
+              <BrandMark size={36} />
               <Text style={{ fontSize: 22, fontWeight: '700', letterSpacing: -0.4, color: '#FFFFFF' }}>Edgewise</Text>
             </View>
             <Pressable

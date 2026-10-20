@@ -3,13 +3,14 @@ import { Animated, Pressable, Text, View, useWindowDimensions } from 'react-nati
 import { usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { NavFrame } from './nav-frame';
 import { AccountMenu } from '@/components/ui/account-button';
 import { initials as getInitials, useSession } from '@/lib/session';
 import { colors } from './theme';
 import { hovered } from './ui';
 import { useLoop } from './motion';
 import HamburgerMenu from './menu';
-import { ModeButton } from './mode-switch';
+import { ModeToggle } from './mode-switch';
 
 // WIRE: replace with the signed-in user's initials
 const INITIALS = 'CM';
@@ -31,76 +32,52 @@ function Header({ path, wide }: { path: string; wide: boolean }) {
   const { user } = useSession();
   const [accountOpen, setAccountOpen] = useState(false);
   const userInitials = user ? getInitials(user) : INITIALS;
-  return (
-    <View
-      style={{
-        width: '100%',
-        maxWidth: 1200,
-        alignSelf: 'center',
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 20,
-        paddingTop: insets.top + 14,
-        paddingBottom: 14,
-      }}
-    >
+  const link = (t: { label: string; href: string }) => {
+    const on = isActive(path, t.href);
+    return (
       <Pressable
+        key={t.href}
         accessibilityRole="link"
-        accessibilityLabel="Edgewise home"
-        onPress={() => router.push('/' as never)}
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
+        accessibilityState={{ selected: on }}
+        onPress={() => router.push(t.href as never)}
+        style={(s) => ({
+          paddingVertical: 8,
+          paddingHorizontal: 14,
+          borderRadius: 999,
+          backgroundColor: on ? colors.mintTint : hovered(s) ? colors.skeleton : 'transparent',
+        })}
       >
-        <View style={{ width: 36, height: 36, borderRadius: 9, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '700' }}>E</Text>
-        </View>
-        <Text style={{ fontSize: 22, fontWeight: '700', letterSpacing: -0.4, color: colors.ink }}>Edgewise</Text>
+        <Text style={{ fontSize: 15, fontWeight: on ? '600' : '400', color: on ? colors.greenDark : colors.muted }}>{t.label}</Text>
       </Pressable>
-
-      {wide ? (
-        <View style={{ flexDirection: 'row', gap: 4 }}>
-          {TABS.map((t) => {
-            const on = isActive(path, t.href);
-            return (
-              <Pressable
-                key={t.href}
-                accessibilityRole="link"
-                accessibilityState={{ selected: on }}
-                onPress={() => router.push(t.href as never)}
-                style={(s) => ({
-                  paddingVertical: 10,
-                  paddingHorizontal: 18,
-                  borderRadius: 999,
-                  backgroundColor: on ? colors.mintTint : hovered(s) ? colors.skeleton : 'transparent',
-                })}
-              >
-                <Text style={{ fontSize: 16, fontWeight: on ? '600' : '400', color: on ? colors.greenDark : colors.muted }}>
-                  {t.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      ) : null}
-
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        {wide ? null : <HamburgerMenu tabs={TABS} path={path} isActive={isActive} initials={userInitials} />}
-        {wide ? <ModeButton /> : null}
-        {wide ? (
+    );
+  };
+  return (
+    <>
+      <NavFrame
+        wide={wide}
+        top={insets.top}
+        onLogo={() => router.push('/' as never)}
+        linksLeft={TABS.slice(0, 2).map(link)}
+        linksRight={TABS.slice(2).map(link)}
+        menu={<HamburgerMenu tabs={TABS} path={path} isActive={isActive} initials={userInitials} />}
+        tools={
           <>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Account"
-              onPress={() => setAccountOpen(true)}
-              style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' }}
-            >
-              <Text style={{ color: '#FFFFFF', fontWeight: '600' }}>{userInitials}</Text>
-            </Pressable>
-            <AccountMenu open={accountOpen} onClose={() => setAccountOpen(false)} />
+            <ModeToggle />
+            {wide ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Account"
+                onPress={() => setAccountOpen(true)}
+                style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Text style={{ color: '#FFFFFF', fontWeight: '600' }}>{userInitials}</Text>
+              </Pressable>
+            ) : null}
           </>
-        ) : null}
-      </View>
-    </View>
+        }
+      />
+      <AccountMenu open={accountOpen} onClose={() => setAccountOpen(false)} />
+    </>
   );
 }
 

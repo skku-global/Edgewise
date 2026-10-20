@@ -74,7 +74,7 @@ export default function CalendarScreen({ results = {}, moods = {}, onOpenDay, on
       <Rise style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'space-between', gap: 20 }}>
         <View style={{ flexShrink: 1 }}>
           <H1>Calendar</H1>
-          <Text style={{ marginTop: 8, fontSize: 18, color: colors.muted }}>Your month at a glance. Each bar is one day's result.</Text>
+          <Text style={{ marginTop: 8, fontSize: 18, color: colors.muted }}>{"Your month at a glance. Each bar is one day's result."}</Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <Pressable
