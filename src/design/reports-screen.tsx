@@ -13,6 +13,7 @@ export type ReportsProps = {
   growth?: number[]; // account balance over time
   bySetup?: Item[];
   byMood?: Item[];
+  byMethod?: Item[];
   insight?: string;
   onTalk?: () => void;
   onRangeChange?: (range: string) => void;
@@ -25,7 +26,7 @@ function GrowBar({ h, last, delay }: { h: number; last: boolean; delay: number }
   const v = useRef(new Animated.Value(0)).current;
   const reduce = useReducedMotion();
   useEffect(() => {
-    Animated.timing(v, { toValue: 1, duration: reduce ? 150 : 800, delay: reduce ? 0 : delay, easing: ease, useNativeDriver: native }).start();
+    Animated.timing(v, { toValue: 1, duration: reduce ? 100 : 240, delay: reduce ? 0 : Math.min(delay, 120) * 0.25, easing: ease, useNativeDriver: native }).start();
   }, []);
   const translateY = v.interpolate({ inputRange: [0, 1], outputRange: [h / 2, 0] });
   return (
@@ -39,7 +40,7 @@ function Rows({ title, items }: { title: string; items: Item[] }) {
   const max = Math.max(1, ...items.map((i) => Math.abs(i.value)));
   const v = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    Animated.timing(v, { toValue: 1, duration: 900, delay: 500, easing: ease, useNativeDriver: false }).start();
+    Animated.timing(v, { toValue: 1, duration: 400, delay: 100, easing: ease, useNativeDriver: false }).start();
   }, []);
   return (
     <View style={{ flexGrow: 1, flexBasis: 320, padding: 24, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }}>
@@ -63,7 +64,8 @@ function Rows({ title, items }: { title: string; items: Item[] }) {
   );
 }
 
-export default function ReportsScreen({ net, winRate, profitFactor, growth = [], bySetup = [], byMood = [], insight, onTalk, onRangeChange }: ReportsProps) {
+export default function ReportsScreen({ net, winRate, profitFactor, growth = [], bySetup = [], byMood = [],
+  byMethod = [], insight, onTalk, onRangeChange }: ReportsProps) {
   const { width } = useWindowDimensions();
   const big = width < 600 ? 44 : 60;
   const [range, setRange] = useState('30 days');
@@ -117,6 +119,7 @@ export default function ReportsScreen({ net, winRate, profitFactor, growth = [],
       <Rise delay={450} style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 20, marginTop: 20 }}>
         <Rows title="By setup" items={bySetup} />
         <Rows title="By mood" items={byMood} />
+        <Rows title="How you log" items={byMethod} />
       </Rise>
 
       {insight ? (

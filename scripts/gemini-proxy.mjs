@@ -39,35 +39,25 @@ const MAX_AUDIO_BYTES = 12 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
-// Shared chart-reading instructions (MT5 + TradingView). Added by apply-chart-rules.mjs
-const CHART_RULES = [
-  "CHART READING RULES (MetaTrader 5 and TradingView screenshots)",
-  "Goal: when the screenshot is a chart, read direction, entry, stop loss (SL) and take profit (TP) from it.",
-  "Trust evidence in this order:",
-  "1. Text labels on the chart or price scale: sl, tp, SL, TP, Stop, Target, buy, sell, a ticket like #123456 buy 0.10, buy limit, sell stop.",
-  "2. Position relative to entry: a BUY has SL below entry and TP above; a SELL has SL above entry and TP below.",
-  "3. Colour, as a hint only. Traders change colours, so never decide from colour alone.",
-  "MetaTrader 5: an open or pending order draws a dotted horizontal line at its entry price, labelled with the ticket, buy or sell, and lots. Its SL and TP are dotted horizontal lines labelled sl and tp (often red by default).",
-  "TradingView: the Long Position and Short Position tools draw two shaded zones from the entry line. Red or pink is the stop (risk) zone, green or teal is the target (reward) zone, and the entry is the line where they meet. Long: target zone above entry, stop zone below. Short: target zone below entry, stop zone above. The tool's own labels often show exact prices, so prefer them. For plain horizontal lines, use their labels first, then position, then colour.",
-  "Reading numbers: take each value from the price scale on the right edge at the height of the line or zone edge, or from an exact price printed in a label. Never estimate from pixel position alone.",
-  "Check: BUY needs SL < entry < TP; SELL needs TP < entry < SL. If the check fails, or a level is not clearly readable, use null for that field and say why in the notes. Never invent a value. If the chart shows no trade levels, leave them null.",
-  "If the screenshot is not a chart (history list, order ticket, positions tab), read the numbers printed there instead.",
-  "In a chat answer (not JSON), say plainly when a level is not clear instead of guessing.",
-].join("\n");
+const CHART_GUIDE = `HOW TO READ A TRADE CHART (MetaTrader 4/5 and TradingView):
+- Prices: read each number from the price scale on the RIGHT edge of the chart, or from the label attached to the line (for example "sl 4012.50", "tp 4045.00", "#123 buy 0.10"). Never estimate a price from where a line sits on screen.
+- MetaTrader 4/5 defaults: the entry/open price is a dotted line with a small arrow or "#ticket buy/sell lots" label (often grey or blue-ish; buy arrow blue, sell arrow red). Stop loss (S/L) is a RED dashed line with an "sl" label. Take profit (T/P) is a GREEN dashed line with a "tp" label. The Trade tab lists Symbol, Type (buy/sell), Volume (lots), Price (entry), S / L, T / P, then profit.
+- TradingView Long Position / Short Position tool: a box split in two coloured zones from the entry line. The TARGET (take profit) zone is the GREEN/TEAL zone (or blue on some themes); the STOP zone is the RED/PINK zone. The entry price is the line where the two zones meet. Long = target above entry, stop below. Short = target below entry, stop above. Labels inside the zones show price, points and risk/reward.
+- Users can change colours. If a line colour does not match, decide from the label text first, then from position: for a buy, stop is below entry and target above; for a sell the reverse.
+- Direction: buy/long if the target is above the entry, sell/short if below.
+- If two lines cannot be told apart, or a number is cut off or blurry, return null for it and say so. Never invent, round or guess a number.
+`;
 
 const EXTRACT_PROMPT =
-  "This is a screenshot from MetaTrader or TradingView (a trade history list, a closed trade, an open position, or a chart with trade lines). " +
+  CHART_GUIDE + "This is a screenshot from MetaTrader (a trade history list, a closed trade, or an open position). " +
   "Read the single most recent or most prominent trade and return ONLY JSON with these keys: " +
   '"pair" (string such as BTCUSD, or null), "direction" ("buy" or "sell", or null), ' +
   '"entry_price" (number or null), "exit_price" (number or null), "size" (lots, number or null), ' +
   '"profit_loss" (number, negative for a loss, or null), ' +
-  '"stop_loss" (number or null), "take_profit" (number or null), ' +
   '"notes" (short string: anything unclear, and how many trades the screenshot shows). ' +
-  "Use null for anything you cannot read clearly. Never guess or invent a number. " +
-  "If it is a chart with trade lines, also read stop_loss and take_profit. " +
-  CHART_RULES;
+  "Use null for anything you cannot read clearly. Never guess or invent a number.";
 
-if (!API_KEY) {
+if (!API_KEY && !(process.env.FALLBACK_API_KEY ?? process.env.GROQ_API_KEY)) {
   console.error("GEMINI_API_KEY is not set.");
   console.error("Usage: GEMINI_API_KEY=your_key node scripts/gemini-proxy.mjs");
   process.exit(1);
@@ -105,19 +95,81 @@ async function readBody(req, limit) {
  * The one place that talks to Gemini, so chat and voice share steps 2 to 5.
  * Returns { status, ok, data }.
  */
-async function callGemini(geminiBody) {
-  // Gemini sometimes answers 503 "overloaded". Wait a moment and try again (up to 3 tries).
-  let result;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    result = await callGeminiOnce(geminiBody);
-    if (![500, 502, 503, 504].includes(result.status)) return result;
-    console.log(`Gemini busy (${result.status}), retry ${attempt + 1} of 2...`);
-    if (attempt < 2) await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
-  }
-  return result;
+
+// ---- Backup AI provider (any OpenAI-compatible free API; Groq by default) ----
+// Used automatically when Gemini is rate-limited, down, or has no key.
+//   GROQ_API_KEY=...  (free at console.groq.com)  or  FALLBACK_API_KEY + FALLBACK_BASE_URL
+const FB_KEY = process.env.FALLBACK_API_KEY ?? process.env.GROQ_API_KEY;
+const FB_BASE = (process.env.FALLBACK_BASE_URL ?? "https://api.groq.com/openai/v1").replace(/\/+$/, "");
+const FB_TEXT = process.env.FALLBACK_TEXT_MODEL ?? "llama-3.3-70b-versatile";
+const FB_VISION = process.env.FALLBACK_VISION_MODEL ?? "meta-llama/llama-4-scout-17b-16e-instruct";
+const FB_STT = process.env.FALLBACK_STT_MODEL ?? "whisper-large-v3-turbo";
+
+function fbReply(text) {
+  return { status: 200, ok: true, data: { candidates: [{ content: { parts: [{ text }] }, finishReason: "STOP" }] } };
 }
 
-async function callGeminiOnce(geminiBody) {
+async function callFallback(g) {
+  const parts = (g.contents ?? []).flatMap((c) => c.parts ?? []);
+  const audio = parts.find((p) => p.inline_data?.mime_type?.startsWith("audio/"));
+  if (audio) {
+    const mime = audio.inline_data.mime_type;
+    const form = new FormData();
+    form.append("file", new Blob([Buffer.from(audio.inline_data.data, "base64")], { type: mime }), "audio." + (mime.split("/")[1] || "webm").replace("x-", ""));
+    form.append("model", FB_STT);
+    form.append("response_format", "json");
+    form.append("temperature", "0");
+    const r = await fetch(FB_BASE + "/audio/transcriptions", { method: "POST", headers: { authorization: "Bearer " + FB_KEY }, body: form });
+    const d = await r.json();
+    console.log("fallback stt " + r.status);
+    return r.ok ? fbReply(d.text ?? "") : { status: r.status, ok: false, data: d };
+  }
+  const hasImage = parts.some((p) => p.inline_data);
+  const messages = [];
+  const sys = (g.systemInstruction?.parts ?? []).map((p) => p.text ?? "").join("");
+  if (sys) messages.push({ role: "system", content: sys });
+  for (const c of g.contents ?? []) {
+    const content = [];
+    for (const p of c.parts ?? []) {
+      if (p.text) content.push({ type: "text", text: p.text });
+      else if (p.inline_data) content.push({ type: "image_url", image_url: { url: "data:" + p.inline_data.mime_type + ";base64," + p.inline_data.data } });
+    }
+    messages.push({ role: c.role === "model" ? "assistant" : "user", content: hasImage ? content : content.map((x) => x.text).join("\n") });
+  }
+  const wantsJson = g.generationConfig?.responseMimeType === "application/json";
+  const body = { model: hasImage ? FB_VISION : FB_TEXT, messages, max_tokens: g.generationConfig?.maxOutputTokens ?? 2000, temperature: g.generationConfig?.temperature ?? 0.3 };
+  if (wantsJson && !hasImage) body.response_format = { type: "json_object" };
+  const r = await fetch(FB_BASE + "/chat/completions", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + FB_KEY }, body: JSON.stringify(body) });
+  const d = await r.json();
+  console.log("fallback chat " + r.status);
+  if (!r.ok) return { status: r.status, ok: false, data: d };
+  let text = d.choices?.[0]?.message?.content ?? "";
+  if (wantsJson) {
+    const a = text.indexOf("{");
+    const z = text.lastIndexOf("}");
+    if (a >= 0 && z > a) text = text.slice(a, z + 1);
+  }
+  const res = fbReply(text);
+  if (d.choices?.[0]?.finish_reason === "length") res.data.candidates[0].finishReason = "MAX_TOKENS";
+  return res;
+}
+
+async function callGemini(geminiBody) {
+  if (API_KEY) {
+    try {
+      const first = await callGeminiOnly(geminiBody);
+      if (first.ok || !FB_KEY || !(first.status === 429 || first.status >= 500)) return first;
+      console.log("Gemini " + first.status + ", trying backup provider");
+    } catch (error) {
+      if (!FB_KEY) throw error;
+      console.log("Gemini unreachable, trying backup provider");
+    }
+  }
+  if (!FB_KEY) throw new Error("No AI key is set (GEMINI_API_KEY or GROQ_API_KEY).");
+  return callFallback(geminiBody);
+}
+
+async function callGeminiOnly(geminiBody) {
   const upstream = await fetch(UPSTREAM, {
     // API STEP 2 - METHOD: POST, because we are sending data.
     method: "POST",
@@ -131,7 +183,7 @@ async function callGeminiOnce(geminiBody) {
   });
 
   // API STEP 5 - RESPONSE: read the status code first, then the data.
-  const data = await upstream.json().catch(() => ({ error: { message: "Gemini returned an error page (status " + upstream.status + ")" } }));
+  const data = await upstream.json();
   console.log(`${upstream.status} ${upstream.statusText}`);
   return { status: upstream.status, ok: upstream.ok, data };
 }
@@ -160,7 +212,7 @@ function toGeminiBody(appBody) {
   }
 
   return {
-    systemInstruction: { parts: [{ text: (appBody.system ?? "") + (shots.length > 0 ? "\n\n" + CHART_RULES : "") }] },
+    systemInstruction: { parts: [{ text: (appBody.system ?? "") + (shots.length > 0 ? "\n\n" + CHART_GUIDE : "") }] },
     contents,
     generationConfig: { maxOutputTokens: appBody.max_tokens ?? 1000 },
   };
@@ -290,9 +342,8 @@ async function handleExtractTrade(req, res) {
 }
 
 /** POST /v1/extract-plan - one or several screenshots of ONE trade, as JSON { images: [{ mime, data }] }. */
-const PLAN_PROMPT = `These screenshots show ONE forex/CFD trade (chart with lines, positions tab, order ticket or history). Combine them and read: pair (symbol, e.g. XAUUSD), direction ("buy" or "sell"), entry_price, stop_loss (S/L), take_profit (T/P), size (lots), notes (one short line of anything useful). Use null for anything not clearly visible. Never invent or estimate numbers.
-${CHART_RULES}
-Reply with JSON only: {"pair":..,"direction":..,"entry_price":..,"stop_loss":..,"take_profit":..,"size":..,"notes":..}`;
+const PLAN_PROMPT = `${CHART_GUIDE}
+These screenshots show ONE forex/CFD trade (chart with lines, positions tab, order ticket or history). Combine them and read: pair (symbol, e.g. XAUUSD), direction ("buy" or "sell"), entry_price, stop_loss (S/L), take_profit (T/P), size (lots), notes (one short line of anything useful). Use null for anything not clearly visible. Never invent or estimate numbers. Reply with JSON only: {"pair":..,"direction":..,"entry_price":..,"stop_loss":..,"take_profit":..,"size":..,"notes":..}`;
 
 async function handleExtractPlan(req, res) {
   const body = JSON.parse((await readBody(req, 18 * 1024 * 1024)).toString("utf8"));
@@ -368,16 +419,15 @@ async function handleExtractTrades(req, res) {
 
 /** POST /v1/extract-entry - what the user said (and any screenshots) -> something to save. JSON { text, images? }. */
 function entryPrompt(text) {
-  return `You turn a trader's spoken or typed message into a journal record. Today is ${new Date().toISOString().slice(0, 10)}.
+  return `${CHART_GUIDE}
+You turn a trader's spoken or typed message into a journal record. Today is ${new Date().toISOString().slice(0, 10)}.
 Decide "kind":
 - "trade": a trade that is already CLOSED (has an exit price or a result) and should be logged.
 - "plan": a trade they are about to take or are in right now (entry, stop, target, reasons).
 - "note": only feelings or what happened BEFORE a trade ("phase":"before") or AFTER a trade ("phase":"after"), with no new trade.
 - "none": it is a question or chat, not something to save.
 Reply with JSON only: {"kind":..,"pair":string|null,"direction":"buy"|"sell"|null,"entry_price":number|null,"exit_price":number|null,"stop_loss":number|null,"take_profit":number|null,"size":number|null,"profit_loss":number|null,"reasons":string,"feelings":string,"phase":"before"|"after"|null,"summary":string}.
-Use null for anything not clearly said or visible. Never invent or estimate a number. Numbers from screenshots must be ones you can read.
-${CHART_RULES}
- "reasons" is why they took or plan the trade; "feelings" is how they felt; copy their words, do not add advice. "summary" is one short plain sentence of what you understood.
+Use null for anything not clearly said or visible. Never invent or estimate a number. Numbers from screenshots must be ones you can read. "reasons" is why they took or plan the trade; "feelings" is how they felt; copy their words, do not add advice. "summary" is one short plain sentence of what you understood.
 The user's message:
 """${text}"""`;
 }

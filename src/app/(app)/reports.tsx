@@ -9,6 +9,16 @@ import { withinRange, type RangeKey } from '@/lib/date-range';
 import { displaySetup } from '@/lib/setup-types';
 import { breakdownBy, buildDailySeries, computeStats } from '@/lib/trade-stats';
 
+const METHOD_LABEL: Record<string, string> = {
+  hand: 'By hand',
+  screenshot: 'Screenshot',
+  history: 'History import',
+  chat: 'Chat / voice',
+  plan: 'Plan (voice or text)',
+  report: 'Report import',
+  mt5: 'Auto-sync',
+};
+
 const RANGES: Record<string, RangeKey> = {
   '7 days': '7d',
   '30 days': '30d',
@@ -33,6 +43,11 @@ export default function Reports() {
       ...new Set(t.moods.map((m) => m.toLowerCase())),
     ]).map((r) => ({ label: r.label, value: r.netPl }));
 
+    const byMethod = breakdownBy(scoped, (t) => {
+      const key = t.log_method ?? (t.source && t.source !== 'manual' ? t.source : null);
+      return [key ? (METHOD_LABEL[key] ?? key) : 'Before tracking'];
+    }).map((r) => ({ label: r.label + ' (' + r.trades + ')', value: r.netPl }));
+
     let insight: string | undefined;
     if (stats.trades > 0) {
       const best = bySetup[0];
@@ -49,6 +64,7 @@ export default function Reports() {
       growth,
       bySetup,
       byMood,
+      byMethod,
       insight,
     };
   }, [trades, range]);
