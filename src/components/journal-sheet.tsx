@@ -1,16 +1,17 @@
 /**
- * Plan a trade BEFORE taking it.
+ * Unified Trade Journal Sheet (Before -> During -> After).
  *
- * You write (or speak) your reasons and how you feel. The app then:
- *   1. checks warnings with plain arithmetic: no stop, lot size far above your
- *      usual, bad risk to reward
- *   2. asks the AI whether your reasons show each of YOUR rules
- *   3. gives a grade from how many rules were met, capped when there is a warning
- * Nothing is saved until you press "Save plan".
+ * One entry per trade, moving through:
+ *   - Before: Plan it, check rules, arithmetic warnings, entry chart screenshot.
+ *   - During: Timestamped notes & feelings, optional screenshots, optional "Ask coach".
+ *   - After: Exit price, result P/L, exit screenshot, lesson, review, close_entry RPC.
+ *
+ * Enforces rule: Manual trades require at least 2 screenshots (entry & exit) to close, max 5.
  */
 
-import { useCallback, useEffect, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
@@ -19,77 +20,43 @@ import { Field } from '@/components/ui/field';
 import { Pill } from '@/components/ui/pill';
 import { Sheet } from '@/components/ui/sheet';
 import { VoiceButton } from '@/components/voice-button';
-import { VoiceQueueBanner } from '@/components/voice-queue-banner';
 import type { Theme } from '@/constants/theme';
 import {
+  closeEntryViaRpc,
+  coachCheckin,
   computeFlags,
   DEFAULT_RULES,
   gradePlan,
   insertEntry,
   loadRules,
-  parseRules,
-  saveRules,
+  updateEntry,
   usualLotSize,
+  type Checkin,
   type Direction,
   type GradeOutcome,
+  type JournalEntry,
   type PlanInput,
 } from '@/lib/journal';
-import { extractPlanFromImages, pickScreenshots } from '@/lib/plan-vision';
+import { extractPlanFromImages } from '@/lib/plan-vision';
 import {
-  calcLots,
-  loadSizing,
-  resolvePointValue,
-  saveSizing,
-  type LotResult,
-  type SizingSettings,
-} from '@/lib/sizing';
+  deleteShot,
+  listShots,
+  pickShotImage,
+  uploadShot,
+  type EntryShot,
+  type ShotPhase,
+} from '@/lib/shots';
 import { useThemedStyles } from '@/lib/styles';
 
-type SizingView = {
-  message?: string;
-  result?: LotResult;
-  source?: string;
-};
-
-type JournalSheetProps = {
+export type JournalSheetProps = {
   visible: boolean;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved?: () => void;
+  initialEntry?: JournalEntry | null;
+  initialPhase?: 'before' | 'during' | 'after';
 };
 
-type FormState = {
-  pair: string;
-  direction: Direction;
-  planned_entry: string;
-  stop_loss: string;
-  take_profit: string;
-  size: string;
-  reasons: string;
-  feelings_before: string;
-};
-
-const initialForm: FormState = {
-  pair: '',
-  direction: 'buy',
-  planned_entry: '',
-  stop_loss: '',
-  take_profit: '',
-  size: '',
-  reasons: '',
-  feelings_before: '',
-};
-
-type Errors = Partial<Record<keyof FormState, string>>;
-
-/** Blank is fine (returns null). Anything typed must be a number above 0. */
-function toNumber(raw: string): number | null | 'bad' {
-  const text = raw.trim();
-  if (!text) {
-    return null;
-  }
-  const value = Number(text);
-  return Number.isFinite(value) && value > 0 ? value : 'bad';
-}
+export type PhaseTab = 'before' | 'during' | 'after';
 
 export function gradeTone(grade: string | null): 'gain' | 'neutral' | 'loss' {
   if (grade === 'A+' || grade === 'A' || grade === 'B+') return 'gain';
@@ -97,614 +64,1123 @@ export function gradeTone(grade: string | null): 'gain' | 'neutral' | 'loss' {
   return 'loss';
 }
 
-export function JournalSheet({ visible, onClose, onSaved }: JournalSheetProps) {
+function SelectablePill({
+  label,
+  selected,
+  tone = 'neutral',
+  onPress,
+}: {
+  label: string;
+  selected: boolean;
+  tone?: 'gain' | 'loss' | 'accent' | 'neutral';
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress}>
+      <Pill label={label} solid={selected} tone={tone} />
+    </Pressable>
+  );
+}
+
+const MOODS = ['calm', 'anxious', 'confident', 'frustrated', 'impatient'] as const;
+
+export function JournalSheet({
+  visible,
+  onClose,
+  onSaved,
+  initialEntry = null,
+  initialPhase = 'before',
+}: JournalSheetProps) {
   const styles = useThemedStyles(sheet);
 
-  const [form, setForm] = useState<FormState>(initialForm);
-  const [errors, setErrors] = useState<Errors>({});
-  const [rulesText, setRulesText] = useState(DEFAULT_RULES.join('\n'));
-  const [usual, setUsual] = useState<number | null>(null);
-  const [grading, setGrading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [outcome, setOutcome] = useState<{ grade: GradeOutcome; flags: string[]; plan: PlanInput } | null>(null);
+  // Active entry
+  const [entry, setEntry] = useState<JournalEntry | null>(initialEntry);
+  const [phase, setPhase] = useState<PhaseTab>(initialPhase);
 
-  const [readingShots, setReadingShots] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
-  const [riskText, setRiskText] = useState('');
-  const [valueText, setValueText] = useState('');
-  const [settings, setSettings] = useState<SizingSettings>({ riskAmount: null, pointValues: {} });
-  const [sizing, setSizing] = useState<SizingView | null>(null);
-  const [sizingBusy, setSizingBusy] = useState(false);
+  // Before fields
+  const [pair, setPair] = useState('');
+  const [direction, setDirection] = useState<Direction>('buy');
+  const [plannedEntry, setPlannedEntry] = useState('');
+  const [stopLoss, setStopLoss] = useState('');
+  const [takeProfit, setTakeProfit] = useState('');
+  const [size, setSize] = useState('');
+  const [reasons, setReasons] = useState('');
+  const [feelingsBefore, setFeelingsBefore] = useState('');
+
+  // Before checks & rules
+  const [rules, setRules] = useState<string[]>(DEFAULT_RULES);
+  const [usualLots, setUsualLots] = useState<number | null>(null);
+  const [gradeResult, setGradeResult] = useState<GradeOutcome | null>(null);
+  const [checkingPlan, setCheckingPlan] = useState(false);
+
+  // During fields
+  const [checkinText, setCheckinText] = useState('');
+  const [checkinMood, setCheckinMood] = useState<string>('calm');
+  const [askingCoachId, setAskingCoachId] = useState<number | null>(null);
+
+  // After fields
+  const [exitPrice, setExitPrice] = useState('');
+  const [resultPl, setResultPl] = useState('');
+  const [lesson, setLesson] = useState('');
+  const [thoughts, setThoughts] = useState('');
+  const [emotionAfter, setEmotionAfter] = useState<string>('calm');
+
+  // Screenshots
+  const [shots, setShots] = useState<EntryShot[]>([]);
+  const [loadingShots, setLoadingShots] = useState(false);
+  const [uploadingShot, setUploadingShot] = useState(false);
+
+  // Status & errors
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  // Sync state when initialEntry or visible changes
+  useEffect(() => {
+    if (!visible) return;
+    setEntry(initialEntry);
+    setPhase(
+      initialEntry?.status === 'closed'
+        ? 'after'
+        : initialEntry?.status === 'open'
+          ? 'during'
+          : initialPhase
+    );
+
+    if (initialEntry) {
+      setPair(initialEntry.pair ?? '');
+      setDirection(initialEntry.direction ?? 'buy');
+      setPlannedEntry(initialEntry.planned_entry ? String(initialEntry.planned_entry) : '');
+      setStopLoss(initialEntry.stop_loss ? String(initialEntry.stop_loss) : '');
+      setTakeProfit(initialEntry.take_profit ? String(initialEntry.take_profit) : '');
+      setSize(initialEntry.size ? String(initialEntry.size) : '');
+      setReasons(initialEntry.reasons ?? '');
+      setFeelingsBefore(initialEntry.feelings_before ?? '');
+      setExitPrice(initialEntry.exit_price ? String(initialEntry.exit_price) : '');
+      setResultPl(initialEntry.result_pl !== null && initialEntry.result_pl !== undefined ? String(initialEntry.result_pl) : '');
+      setLesson(initialEntry.lesson ?? '');
+      setThoughts(initialEntry.thoughts ?? '');
+      setEmotionAfter(initialEntry.emotion_after ?? 'calm');
+    } else {
+      setPair('');
+      setDirection('buy');
+      setPlannedEntry('');
+      setStopLoss('');
+      setTakeProfit('');
+      setSize('');
+      setReasons('');
+      setFeelingsBefore('');
+      setExitPrice('');
+      setResultPl('');
+      setLesson('');
+      setThoughts('');
+      setEmotionAfter('calm');
+      setGradeResult(null);
+    }
+
+    loadRules().then(setRules).catch(console.error);
+    usualLotSize().then(setUsualLots).catch(console.error);
+  }, [visible, initialEntry, initialPhase]);
+
+  // Load screenshots for active entry
+  const reloadShots = useCallback(async (entryId?: number | null) => {
+    const id = entryId ?? entry?.id;
+    if (!id) {
+      setShots([]);
+      return;
+    }
+    setLoadingShots(true);
+    try {
+      const list = await listShots({ entryId: id });
+      setShots(list);
+    } catch (err) {
+      console.error('Error loading shots:', err);
+    } finally {
+      setLoadingShots(false);
+    }
+  }, [entry?.id]);
 
   useEffect(() => {
-    if (!visible) {
-      setForm(initialForm);
-      setErrors({});
-      setError(null);
-      setOutcome(null);
-      setNote(null);
-      setSizing(null);
-      setValueText('');
-      return;
+    if (visible && entry?.id) {
+      reloadShots(entry.id);
     }
-    loadRules().then((rules) => setRulesText(rules.join('\n')));
-    usualLotSize()
-      .then(setUsual)
-      .catch(() => setUsual(null));
-    loadSizing().then((saved) => {
-      setSettings(saved);
-      setRiskText(saved.riskAmount ? String(saved.riskAmount) : '');
-    });
-  }, [visible]);
+  }, [visible, entry?.id, reloadShots]);
 
-  /** Pick one or several screenshots and fill the plan from them. */
-  const fillFromScreenshots = async () => {
-    setError(null);
-    setNote(null);
-    try {
-      const picked = await pickScreenshots();
-      if (picked.length === 0) {
-        return;
-      }
-      setReadingShots(true);
-      const found = await extractPlanFromImages(picked);
-      const text = (value: number | null, fallback: string) =>
-        value !== null ? String(value) : fallback;
-      setForm((current) => ({
-        ...current,
-        pair: found.pair ?? current.pair,
-        direction: found.direction ?? current.direction,
-        planned_entry: text(found.entry_price, current.planned_entry),
-        stop_loss: text(found.stop_loss, current.stop_loss),
-        take_profit: text(found.take_profit, current.take_profit),
-        size: text(found.size, current.size),
-      }));
-      setOutcome(null);
-      setSizing(null);
-      setNote(
-        `Read ${picked.length} screenshot${picked.length === 1 ? '' : 's'}. ` +
-          `${found.notes ? found.notes + ' ' : ''}Check every number before you go on. AI can misread a digit.`,
-      );
-    } catch (err) {
-      console.error(err);
-      setError(err instanceof Error ? err.message : 'Could not read those screenshots. Try again.');
-    } finally {
-      setReadingShots(false);
-    }
-  };
-
-  /** Lot size for your fixed risk, from entry and stop loss. Plain arithmetic. */
-  const calculateLots = async () => {
-    setError(null);
-    const risk = Number(riskText);
-    const entry = toNumber(form.planned_entry);
-    const stop = toNumber(form.stop_loss);
-    const pair = form.pair.trim().toUpperCase();
-
-    if (!(risk > 0)) {
-      setSizing({ message: 'Enter how many dollars you risk on each trade.' });
-      return;
-    }
-    if (!pair) {
-      setSizing({ message: 'Enter the pair first.' });
-      return;
-    }
-    if (entry === null || entry === 'bad' || stop === null || stop === 'bad') {
-      setSizing({ message: 'Fill in the entry and the stop loss first.' });
-      return;
-    }
-    const typed = valueText.trim() ? Number(valueText) : null;
-    if (typed !== null && !(typed > 0)) {
-      setSizing({ message: 'The value per lot must be a number above 0.' });
-      return;
-    }
-
-    setSizingBusy(true);
-    try {
-      const next: SizingSettings = {
-        riskAmount: risk,
-        pointValues: typed ? { ...settings.pointValues, [pair]: typed } : settings.pointValues,
-      };
-      await saveSizing(next);
-      setSettings(next);
-
-      const resolved = await resolvePointValue(pair, next);
-      if (!resolved) {
-        setSizing({
-          message:
-            `I do not know what a 1.00 price move is worth per 1 lot on ${pair}, and you have fewer ` +
-            'than 3 past trades on it. Type it in the box above. Find it in MetaTrader under the ' +
-            "pair's contract specification, or from a past trade: profit divided by (price move x lots).",
-        });
-        return;
-      }
-
-      const result = calcLots({ risk, entry, stop, valuePerUnit: resolved.value });
-      if (!result) {
-        setSizing({ message: 'Entry and stop loss cannot be the same price.' });
-        return;
-      }
-      setSizing({
-        result,
-        source:
-          resolved.source === 'learned'
-            ? `Value per lot learned from ${resolved.count} of your past ${pair} trades.`
-            : `Using the value you saved for ${pair}.`,
-      });
-    } catch (err) {
-      console.error(err);
-      setSizing({ message: 'Could not calculate that. Try again.' });
-    } finally {
-      setSizingBusy(false);
-    }
-  };
-
-  const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
-    setForm((current) => ({ ...current, [key]: value }));
-    setErrors((current) => (current[key] ? { ...current, [key]: undefined } : current));
-    // Changing the plan after grading makes the grade stale.
-    setOutcome(null);
-  };
-
-  const append = useCallback(
-    (key: 'reasons' | 'feelings_before') => (text: string) =>
-      setForm((current) => ({
-        ...current,
-        [key]: current[key].trim() ? `${current[key].trim()} ${text}` : text,
-      })),
-    [],
+  // Compute live arithmetic warnings
+  const currentPlanInput: PlanInput = useMemo(
+    () => ({
+      pair: pair.trim(),
+      direction,
+      planned_entry: plannedEntry.trim() ? Number(plannedEntry) : null,
+      stop_loss: stopLoss.trim() ? Number(stopLoss) : null,
+      take_profit: takeProfit.trim() ? Number(takeProfit) : null,
+      size: size.trim() ? Number(size) : null,
+      reasons: reasons.trim(),
+      feelings_before: feelingsBefore.trim(),
+    }),
+    [pair, direction, plannedEntry, stopLoss, takeProfit, size, reasons, feelingsBefore]
   );
 
-  const handleGrade = async () => {
-    const found: Errors = {};
-    if (!form.pair.trim()) found.pair = 'Which pair?';
-    if (!form.reasons.trim()) found.reasons = 'Say why you want this trade';
+  const arithmeticFlags = useMemo(
+    () => computeFlags(currentPlanInput, usualLots),
+    [currentPlanInput, usualLots]
+  );
 
-    const entry = toNumber(form.planned_entry);
-    const stop = toNumber(form.stop_loss);
-    const target = toNumber(form.take_profit);
-    const size = toNumber(form.size);
-    if (entry === 'bad') found.planned_entry = 'Numbers only';
-    if (stop === 'bad') found.stop_loss = 'Numbers only';
-    if (target === 'bad') found.take_profit = 'Numbers only';
-    if (size === 'bad') found.size = 'Numbers only';
+  /* ------------------------------------------------------------------ */
+  /* Actions: Screenshots                                               */
+  /* ------------------------------------------------------------------ */
 
-    setErrors(found);
+  const handleAddScreenshot = async (shotPhase: ShotPhase) => {
     setError(null);
-    if (Object.keys(found).length > 0) {
-      return;
-    }
-
-    const plan: PlanInput = {
-      pair: form.pair.trim().toUpperCase(),
-      direction: form.direction,
-      planned_entry: entry as number | null,
-      stop_loss: stop as number | null,
-      take_profit: target as number | null,
-      size: size as number | null,
-      reasons: form.reasons.trim(),
-      feelings_before: form.feelings_before.trim(),
-    };
-
-    setGrading(true);
+    setStatusMessage(null);
     try {
-      const rules = parseRules(rulesText);
-      const useRules = rules.length > 0 ? rules : DEFAULT_RULES;
-      await saveRules(useRules);
+      const picked = await pickShotImage();
+      if (!picked) return;
 
-      // If you have recorded a fixed risk and the pair's value per lot is known,
-      // a lot size that would lose more than that is flagged.
-      let riskCheck: { riskAmount: number; valuePerUnit: number } | undefined;
-      const riskNumber = Number(riskText);
-      if (riskNumber > 0) {
-        const resolved = await resolvePointValue(plan.pair, await loadSizing());
-        if (resolved) {
-          riskCheck = { riskAmount: riskNumber, valuePerUnit: resolved.value };
-        }
+      if (shots.length >= 5) {
+        setError('Maximum of 5 screenshots allowed per trade.');
+        return;
       }
 
-      const flags = computeFlags(plan, usual, riskCheck);
-      const grade = await gradePlan(plan, useRules, flags);
-      setOutcome({ grade, flags, plan });
+      setUploadingShot(true);
+      let activeEntryId = entry?.id;
+
+      // If we don't have an entry yet in 'before' phase, auto-create a draft entry first
+      if (!activeEntryId) {
+        const draft = await insertEntry(
+          {
+            pair: pair.trim() || 'DRAFT',
+            direction,
+            planned_entry: plannedEntry ? Number(plannedEntry) : null,
+            stop_loss: stopLoss ? Number(stopLoss) : null,
+            take_profit: takeProfit ? Number(takeProfit) : null,
+            size: size ? Number(size) : null,
+            reasons: reasons.trim(),
+            feelings_before: feelingsBefore.trim(),
+          },
+          { grade: 'Draft', results: [], flags: [], summary: '' }
+        );
+        activeEntryId = draft.id;
+        setEntry(draft);
+      }
+
+      const uploaded = await uploadShot({
+        uri: picked.uri,
+        phase: shotPhase,
+        entryId: activeEntryId,
+      });
+
+      setShots((prev) => [...prev, uploaded]);
+
+      // Read numbers from screenshot and MERGE into empty fields only (never overwrite)
+      setStatusMessage('Analyzing screenshot for trade details…');
+      try {
+        const extracted = await extractPlanFromImages([
+          { uri: picked.uri, mime: 'image/jpeg', name: picked.name },
+        ]);
+
+        if (extracted) {
+          if (!pair.trim() && extracted.pair) setPair(extracted.pair);
+          if (extracted.direction && (!direction || direction === 'buy')) setDirection(extracted.direction);
+          if (!plannedEntry.trim() && extracted.entry_price !== null) setPlannedEntry(String(extracted.entry_price));
+          if (!stopLoss.trim() && extracted.stop_loss !== null) setStopLoss(String(extracted.stop_loss));
+          if (!takeProfit.trim() && extracted.take_profit !== null) setTakeProfit(String(extracted.take_profit));
+          if (!size.trim() && extracted.size !== null) setSize(String(extracted.size));
+          if (shotPhase === 'after' && !exitPrice.trim() && extracted.entry_price !== null) {
+            setExitPrice(String(extracted.entry_price));
+          }
+          setStatusMessage('Trade numbers read from screenshot and merged into empty fields.');
+        }
+      } catch (aiErr) {
+        console.warn('AI read failed, image saved:', aiErr);
+        setStatusMessage('Screenshot attached.');
+      }
     } catch (err) {
       console.error(err);
-      setError(err instanceof Error ? err.message : 'Could not grade the plan. Try again.');
+      setError(err instanceof Error ? err.message : 'Could not upload screenshot.');
     } finally {
-      setGrading(false);
+      setUploadingShot(false);
     }
   };
 
-  const handleSave = async () => {
-    if (!outcome) {
-      return;
-    }
-    setSaving(true);
-    setError(null);
+  const handleDeleteScreenshot = async (shot: EntryShot) => {
     try {
-      await insertEntry(outcome.plan, {
-        grade: outcome.grade.grade,
-        results: outcome.grade.results,
-        flags: outcome.flags,
-        summary: outcome.grade.summary,
-      });
-      onSaved();
-      onClose();
+      await deleteShot(shot.id, shot.path);
+      setShots((prev) => prev.filter((s) => s.id !== shot.id));
     } catch (err) {
       console.error(err);
-      setError(
-        err instanceof Error
-          ? `Could not save the plan: ${err.message}`
-          : 'Could not save the plan right now.',
-      );
-    } finally {
-      setSaving(false);
+      setError('Could not delete screenshot.');
     }
   };
+
+  /* ------------------------------------------------------------------ */
+  /* Actions: Phase 1 (Before)                                          */
+  /* ------------------------------------------------------------------ */
+
+  const handleGradePlan = async () => {
+    if (!pair.trim()) {
+      setError('Enter a currency pair (e.g. EURUSD).');
+      return;
+    }
+    setCheckingPlan(true);
+    setError(null);
+    try {
+      const outcome = await gradePlan(currentPlanInput, rules, arithmeticFlags);
+      setGradeResult(outcome);
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : 'Failed to grade plan.');
+    } finally {
+      setCheckingPlan(false);
+    }
+  };
+
+  const handleSavePlan = async () => {
+    if (!pair.trim()) {
+      setError('Enter a pair (e.g. EURUSD) before saving.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      if (entry) {
+        const updated = await updateEntry(entry.id, {
+          pair: pair.trim().toUpperCase(),
+          direction,
+          planned_entry: plannedEntry.trim() ? Number(plannedEntry) : null,
+          stop_loss: stopLoss.trim() ? Number(stopLoss) : null,
+          take_profit: takeProfit.trim() ? Number(takeProfit) : null,
+          size: size.trim() ? Number(size) : null,
+          reasons: reasons.trim(),
+          feelings_before: feelingsBefore.trim(),
+          grade: gradeResult?.grade ?? entry.grade,
+          rules_result: gradeResult?.results ?? entry.rules_result,
+          flags: arithmeticFlags,
+          ai_summary: gradeResult?.summary ?? entry.ai_summary,
+        });
+        setEntry(updated);
+      } else {
+        const created = await insertEntry(
+          currentPlanInput,
+          gradeResult
+            ? { ...gradeResult, flags: arithmeticFlags }
+            : { grade: 'D', results: [], flags: arithmeticFlags, summary: '' }
+        );
+        setEntry(created);
+      }
+      setStatusMessage('Plan saved. You can track check-ins during the trade or log the exit.');
+      onSaved?.();
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : 'Could not save plan.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Actions: Phase 2 (During)                                          */
+  /* ------------------------------------------------------------------ */
+
+  const handleAddCheckin = async () => {
+    const text = checkinText.trim();
+    if (!text) {
+      setError('Enter how you feel or how the trade is going.');
+      return;
+    }
+    if (!entry) {
+      setError('Please save the initial plan in the "Before" tab first.');
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      const newCheckin: Checkin = {
+        at: new Date().toISOString(),
+        text,
+        mood: checkinMood,
+      };
+
+      const updatedCheckins = [...entry.checkins, newCheckin];
+      const updated = await updateEntry(entry.id, {
+        checkins: updatedCheckins,
+        status: entry.status === 'planned' ? 'open' : entry.status,
+      });
+
+      setEntry(updated);
+      setCheckinText('');
+      setStatusMessage('Note logged. (No AI called)');
+      onSaved?.();
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : 'Failed to save check-in note.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleAskCoach = async (index: number, checkinItem: Checkin) => {
+    if (!entry) return;
+    setAskingCoachId(index);
+    setError(null);
+    try {
+      const reply = await coachCheckin(entry, checkinItem.text);
+      const updatedCheckins = [...entry.checkins];
+      updatedCheckins[index] = { ...checkinItem, reply };
+
+      const updated = await updateEntry(entry.id, { checkins: updatedCheckins });
+      setEntry(updated);
+      onSaved?.();
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : 'Coach consultation failed.');
+    } finally {
+      setAskingCoachId(null);
+    }
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Actions: Phase 3 (After)                                           */
+  /* ------------------------------------------------------------------ */
+
+  const handleCloseTrade = async () => {
+    if (!entry) {
+      setError('No active entry to close.');
+      return;
+    }
+    if (shots.length < 2) {
+      setError(`Cannot close: 2 screenshots required (entry & exit). You have ${shots.length}.`);
+      return;
+    }
+
+    const exitNum = Number(exitPrice.trim());
+    if (!exitPrice.trim() || !Number.isFinite(exitNum)) {
+      setError('Enter a valid exit price.');
+      return;
+    }
+
+    const plNum = Number(resultPl.trim());
+    if (!resultPl.trim() || !Number.isFinite(plNum)) {
+      setError('Enter a valid result profit/loss amount (e.g. 25.50 or -15.00).');
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      const tradeId = await closeEntryViaRpc({
+        entryId: entry.id,
+        exitPrice: exitNum,
+        resultPl: plNum,
+        lesson: lesson.trim() || undefined,
+        thoughts: thoughts.trim() || undefined,
+        emotionAfter: emotionAfter || undefined,
+        moods: [feelingsBefore, checkinMood, emotionAfter].filter(Boolean),
+      });
+
+      setStatusMessage(`Trade successfully closed and recorded (Trade #${tradeId})!`);
+      onSaved?.();
+      setTimeout(() => {
+        onClose();
+      }, 1000);
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : 'Failed to close trade.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const canClose = shots.length >= 2;
+  const isClosed = entry?.status === 'closed';
 
   return (
     <Sheet
       visible={visible}
       onClose={onClose}
-      title="Plan a trade"
-      subtitle="Say why before you click buy or sell. Graded against your own rules."
-      footer={
-        outcome ? (
-          <View style={styles.footer}>
-            <Button label="Save plan" size="lg" block loading={saving} onPress={handleSave} />
-            <Button
-              label="Edit the plan"
-              variant="secondary"
-              size="lg"
-              block
-              disabled={saving}
-              onPress={() => setOutcome(null)}
-            />
-          </View>
-        ) : (
-          <Button label="Grade my setup" size="lg" block loading={grading} onPress={handleGrade} />
-        )
-      }
+      title={isClosed ? 'Trade Review (Closed)' : entry ? `Trade: ${entry.pair} (${entry.status})` : 'New Trade Journal'}
     >
-      <View style={styles.form}>
-        <Card style={styles.resultCard}>
-          <ThemedText variant="bodyStrong">Fill it from screenshots</ThemedText>
-          <ThemedText variant="caption" tone="textTertiary">
-            Pick one or several: the chart with your lines, the positions tab, the history. The app
-            reads the pair, direction, entry, stop loss, take profit and lots.
-          </ThemedText>
-          <Button
-            label="Choose screenshots"
-            variant="secondary"
-            loading={readingShots}
-            disabled={grading}
-            onPress={fillFromScreenshots}
-          />
-          {note ? (
-            <ThemedText variant="caption" tone="textSecondary">
-              {note}
-            </ThemedText>
-          ) : null}
-        </Card>
-
-        <Field
-          label="Pair"
-          value={form.pair}
-          onChangeText={(value) => set('pair', value)}
-          placeholder="BTCUSD"
-          autoCapitalize="characters"
-          autoCorrect={false}
-          error={errors.pair}
-          editable={!grading}
-        />
-
-        <View style={styles.segmentRow}>
-          {(['buy', 'sell'] as Direction[]).map((direction) => {
-            const active = form.direction === direction;
+      <ScrollView contentContainerStyle={styles.container}>
+        {/* Phase selector tabs */}
+        <View style={styles.phaseTabs}>
+          {(['before', 'during', 'after'] as PhaseTab[]).map((p) => {
+            const active = phase === p;
+            const label = p === 'before' ? '1. Before (Plan)' : p === 'during' ? '2. During (Live)' : '3. After (Close)';
             return (
               <Pressable
-                key={direction}
+                key={p}
                 accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                onPress={() => set('direction', direction)}
-                style={({ pressed }) => [
-                  styles.segment,
-                  active && (direction === 'buy' ? styles.segmentBuy : styles.segmentSell),
-                  pressed && styles.pressed,
-                ]}
+                onPress={() => setPhase(p)}
+                style={[styles.phaseTab, active && styles.phaseTabActive]}
               >
-                <ThemedText variant="label" tone={active ? 'textOnFill' : 'text'}>
-                  {direction.toUpperCase()}
+                <ThemedText
+                  variant="label"
+                  tone={active ? 'accentText' : 'textSecondary'}
+                  style={styles.phaseTabText}
+                >
+                  {label}
                 </ThemedText>
               </Pressable>
             );
           })}
         </View>
 
-        <View style={styles.row}>
-          <Field
-            label="Entry"
-            value={form.planned_entry}
-            onChangeText={(value) => set('planned_entry', value)}
-            placeholder="0"
-            keyboardType="decimal-pad"
-            numeric
-            error={errors.planned_entry}
-            containerStyle={styles.flexOne}
-          />
-          <Field
-            label="Stop loss"
-            value={form.stop_loss}
-            onChangeText={(value) => set('stop_loss', value)}
-            placeholder="0"
-            keyboardType="decimal-pad"
-            numeric
-            error={errors.stop_loss}
-            containerStyle={styles.flexOne}
-          />
-        </View>
-
-        <View style={styles.row}>
-          <Field
-            label="Take profit"
-            value={form.take_profit}
-            onChangeText={(value) => set('take_profit', value)}
-            placeholder="0"
-            keyboardType="decimal-pad"
-            numeric
-            error={errors.take_profit}
-            containerStyle={styles.flexOne}
-          />
-          <Field
-            label="Lot size"
-            value={form.size}
-            onChangeText={(value) => set('size', value)}
-            placeholder="0.01"
-            keyboardType="decimal-pad"
-            numeric
-            error={errors.size}
-            hint={usual ? `Your usual: ${usual}` : undefined}
-            containerStyle={styles.flexOne}
-          />
-        </View>
-
-        <Card style={styles.resultCard}>
-          <ThemedText variant="bodyStrong">Lot size for your fixed risk</ThemedText>
-          <View style={styles.row}>
-            <Field
-              label="Risk per trade ($)"
-              value={riskText}
-              onChangeText={setRiskText}
-              placeholder="10"
-              keyboardType="decimal-pad"
-              numeric
-              hint="Saved for next time"
-              containerStyle={styles.flexOne}
-            />
-            <Field
-              label="$ per 1.00 move, 1 lot"
-              value={valueText}
-              onChangeText={setValueText}
-              placeholder="auto"
-              keyboardType="decimal-pad"
-              numeric
-              hint="Blank = learn from your trades"
-              containerStyle={styles.flexOne}
-            />
-          </View>
-          <Button
-            label="Calculate lot size"
-            variant="secondary"
-            loading={sizingBusy}
-            onPress={calculateLots}
-          />
-          {sizing?.message ? (
-            <ThemedText variant="caption" tone="loss">
-              {sizing.message}
+        {/* Global status / alerts */}
+        {statusMessage ? (
+          <View style={styles.statusBox}>
+            <Ionicons name="checkmark-circle-outline" size={18} color="#0B5A37" />
+            <ThemedText variant="caption" tone="gain" style={{ flex: 1 }}>
+              {statusMessage}
             </ThemedText>
-          ) : null}
-          {sizing?.result ? (
-            <View style={styles.resultCard}>
-              {sizing.result.lots > 0 ? (
-                <>
-                  <ThemedText variant="monoXl" tone="gain">
-                    {sizing.result.lots.toFixed(2)} lots
-                  </ThemedText>
-                  <ThemedText variant="body" tone="textSecondary">
-                    Loses about ${sizing.result.riskAtLots.toFixed(2)} if your stop is hit. Rounded
-                    down so it never goes above your ${riskText}.
-                  </ThemedText>
-                  <Button
-                    label="Use this lot size"
-                    onPress={() => set('size', sizing.result!.lots.toFixed(2))}
-                  />
-                </>
-              ) : (
-                <ThemedText variant="body" tone="loss">
-                  Even 0.01 lots would lose about ${sizing.result.riskAtMinLot.toFixed(2)} at this
-                  stop, which is more than your ${riskText}. Use a tighter stop or accept the
-                  higher risk on purpose.
-                </ThemedText>
-              )}
-              {sizing.source ? (
-                <ThemedText variant="caption" tone="textTertiary">
-                  {sizing.source} It is an estimate: check it against your broker.
-                </ThemedText>
-              ) : null}
-            </View>
-          ) : null}
-        </Card>
-
-        <VoiceQueueBanner onText={append('reasons')} />
-
-        <Field
-          label="Why are you taking this trade?"
-          value={form.reasons}
-          onChangeText={(value) => set('reasons', value)}
-          placeholder="List every reason: trend, level, confirmation, where your stop is and why..."
-          multiline
-          inputStyle={styles.textArea}
-          error={errors.reasons}
-          editable={!grading}
-        />
-        <VoiceButton label="Speak your reasons" onText={append('reasons')} disabled={grading} />
-
-        <Field
-          label="How do you feel right now?"
-          value={form.feelings_before}
-          onChangeText={(value) => set('feelings_before', value)}
-          placeholder="Calm, rushed, chasing a loss, confident, unsure..."
-          multiline
-          inputStyle={styles.textAreaSmall}
-          editable={!grading}
-        />
-        <VoiceButton label="Speak how you feel" onText={append('feelings_before')} disabled={grading} />
-
-        <Field
-          label="Your rules (one per line)"
-          value={rulesText}
-          onChangeText={setRulesText}
-          multiline
-          inputStyle={styles.textArea}
-          hint="The grade counts how many of these your reasons show. A+ means all of them."
-          editable={!grading}
-        />
+          </View>
+        ) : null}
 
         {error ? (
-          <View style={styles.errorBanner}>
-            <ThemedText variant="label" tone="loss">
+          <View style={styles.errorBox}>
+            <Ionicons name="alert-circle-outline" size={18} color="#B3322A" />
+            <ThemedText variant="caption" tone="loss" style={{ flex: 1 }}>
               {error}
             </ThemedText>
           </View>
         ) : null}
 
-        {outcome ? (
-          <View>
-            <SectionHeader title="Your grade" />
-            <Card style={styles.resultCard}>
-              <View style={styles.gradeRow}>
-                <ThemedText variant="monoXl" tone={(gradeTone(outcome.grade.grade) === 'neutral' ? 'textSecondary' : gradeTone(outcome.grade.grade)) as 'gain' | 'loss' | 'textSecondary'}>
-                  {outcome.grade.grade}
-                </ThemedText>
-                <ThemedText variant="caption" tone="textTertiary">
-                  {outcome.grade.results.filter((r) => r.met).length} of{' '}
-                  {outcome.grade.results.length} rules shown
-                </ThemedText>
-              </View>
+        {/* ========================================================== */}
+        {/* PHASE 1: BEFORE                                            */}
+        {/* ========================================================== */}
+        {phase === 'before' && (
+          <View style={styles.section}>
+            <Card style={styles.card}>
+              <SectionHeader
+                title="Trade Parameters"
+                subtitle="Speak, type, or attach a chart screenshot. New data fills empty fields without overwriting."
+              />
 
-              {outcome.flags.map((flag) => (
-                <View key={flag} style={styles.flagRow}>
-                  <Pill label="Warning" tone="loss" solid caps />
-                  <ThemedText variant="body" tone="loss" style={styles.flexOne}>
-                    {flag}
-                  </ThemedText>
+              <View style={styles.row}>
+                <View style={{ flex: 1 }}>
+                  <Field
+                    label="Pair / Symbol"
+                    value={pair}
+                    onChangeText={setPair}
+                    placeholder="e.g. EURUSD, XAUUSD"
+                    autoCapitalize="characters"
+                  />
                 </View>
-              ))}
-              {outcome.flags.length > 0 ? (
-                <ThemedText variant="caption" tone="textTertiary">
-                  A warning caps the grade at C+, however good the reasons sound.
-                </ThemedText>
-              ) : null}
-
-              {outcome.grade.results.map((result) => (
-                <View key={result.rule} style={styles.ruleRow}>
-                  <ThemedText variant="bodyStrong" tone={result.met ? 'gain' : 'loss'}>
-                    {result.met ? '✓' : '✗'}
+                <View style={styles.dirPills}>
+                  <ThemedText variant="caption" tone="textSecondary" style={{ marginBottom: 4 }}>
+                    Direction
                   </ThemedText>
-                  <View style={styles.flexOne}>
-                    <ThemedText variant="body">{result.rule}</ThemedText>
-                    <ThemedText variant="caption" tone="textTertiary">
-                      {result.evidence}
-                    </ThemedText>
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    <SelectablePill
+                      label="BUY / LONG"
+                      selected={direction === 'buy'}
+                      tone="gain"
+                      onPress={() => setDirection('buy')}
+                    />
+                    <SelectablePill
+                      label="SELL / SHORT"
+                      selected={direction === 'sell'}
+                      tone="loss"
+                      onPress={() => setDirection('sell')}
+                    />
                   </View>
                 </View>
-              ))}
+              </View>
 
-              {outcome.grade.summary ? (
-                <ThemedText variant="body" tone="textSecondary">
-                  {outcome.grade.summary}
+              <View style={styles.row}>
+                <View style={{ flex: 1 }}>
+                  <Field
+                    label="Planned Entry"
+                    value={plannedEntry}
+                    onChangeText={setPlannedEntry}
+                    placeholder="e.g. 1.0850"
+                    keyboardType="numeric"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Field
+                    label="Stop Loss (S/L)"
+                    value={stopLoss}
+                    onChangeText={setStopLoss}
+                    placeholder="e.g. 1.0820"
+                    keyboardType="numeric"
+                  />
+                </View>
+              </View>
+
+              <View style={styles.row}>
+                <View style={{ flex: 1 }}>
+                  <Field
+                    label="Take Profit (T/P)"
+                    value={takeProfit}
+                    onChangeText={setTakeProfit}
+                    placeholder="e.g. 1.0920"
+                    keyboardType="numeric"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Field
+                    label="Lot Size"
+                    value={size}
+                    onChangeText={setSize}
+                    placeholder="e.g. 0.10"
+                    keyboardType="numeric"
+                  />
+                </View>
+              </View>
+
+              {/* Reasons & Voice Input */}
+              <View style={{ marginTop: 8 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <ThemedText variant="caption" tone="textSecondary">
+                    Reasons & Confluence
+                  </ThemedText>
+                  <VoiceButton
+                    label="Speak reasons"
+                    onText={(spoken) => setReasons((prev) => (prev ? `${prev} ${spoken}` : spoken))}
+                  />
+                </View>
+                <Field
+                  label=""
+                  value={reasons}
+                  onChangeText={setReasons}
+                  placeholder="Why this trade? Confluence, higher timeframe trend, key support/resistance..."
+                  multiline
+                  numberOfLines={3}
+                />
+              </View>
+
+              <View style={{ marginTop: 8 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <ThemedText variant="caption" tone="textSecondary">
+                    Feelings Before Entry
+                  </ThemedText>
+                  <VoiceButton
+                    label="Speak feeling"
+                    onText={(spoken) => setFeelingsBefore((prev) => (prev ? `${prev} ${spoken}` : spoken))}
+                  />
+                </View>
+                <Field
+                  label=""
+                  value={feelingsBefore}
+                  onChangeText={setFeelingsBefore}
+                  placeholder="How do you feel right now? (Calm, confident, FOMO, hurried...)"
+                />
+              </View>
+
+              {/* Arithmetic Warnings */}
+              {arithmeticFlags.length > 0 ? (
+                <View style={styles.warningBox}>
+                  <ThemedText variant="caption" tone="loss" style={{ fontWeight: '700' }}>
+                    Risk Warnings (Arithmetic):
+                  </ThemedText>
+                  {arithmeticFlags.map((flag, idx) => (
+                    <ThemedText key={idx} variant="caption" tone="loss">
+                      • {flag}
+                    </ThemedText>
+                  ))}
+                </View>
+              ) : null}
+
+              {/* Screenshots section */}
+              <View style={styles.shotHeaderRow}>
+                <ThemedText variant="bodyStrong">
+                  Entry Screenshot ({shots.filter((s) => s.phase === 'before').length} before, {shots.length}/5 total)
                 </ThemedText>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  label={uploadingShot ? 'Analyzing…' : 'Add chart screenshot'}
+                  loading={uploadingShot}
+                  onPress={() => handleAddScreenshot('before')}
+                />
+              </View>
+
+              {/* Thumbnails */}
+              <View style={styles.thumbGrid}>
+                {shots.map((shot) => (
+                  <View key={shot.id} style={styles.thumbWrapper}>
+                    {shot.signed_url ? (
+                      <Image source={{ uri: shot.signed_url }} style={styles.thumbImage} resizeMode="cover" />
+                    ) : (
+                      <View style={[styles.thumbImage, styles.thumbPlaceholder]}>
+                        <Ionicons name="image-outline" size={24} color="#8A948F" />
+                      </View>
+                    )}
+                    <Pressable
+                      style={styles.deleteThumbBtn}
+                      onPress={() => handleDeleteScreenshot(shot)}
+                      accessibilityLabel="Delete screenshot"
+                    >
+                      <Ionicons name="close" size={14} color="#FFFFFF" />
+                    </Pressable>
+                    <ThemedText variant="caption" tone="textTertiary" style={{ textAlign: 'center', marginTop: 2 }}>
+                      {shot.phase}
+                    </ThemedText>
+                  </View>
+                ))}
+              </View>
+
+              {/* Rules check button & results */}
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
+                <Button
+                  variant="secondary"
+                  label={checkingPlan ? 'Checking…' : 'Grade vs Rules'}
+                  loading={checkingPlan}
+                  onPress={handleGradePlan}
+                />
+                <Button
+                  label={busy ? 'Saving…' : entry ? 'Update Plan' : 'Save Plan'}
+                  loading={busy}
+                  onPress={handleSavePlan}
+                />
+              </View>
+
+              {gradeResult ? (
+                <View style={styles.gradeBox}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Pill label={`Grade ${gradeResult.grade}`} solid tone={gradeTone(gradeResult.grade)} />
+                    <ThemedText variant="bodyStrong">{gradeResult.summary}</ThemedText>
+                  </View>
+                  <View style={{ marginTop: 8, gap: 4 }}>
+                    {gradeResult.results.map((r, i) => (
+                      <ThemedText key={i} variant="caption" tone={r.met ? 'gain' : 'loss'}>
+                        {r.met ? '✓' : '✗'} {r.rule}: {r.evidence}
+                      </ThemedText>
+                    ))}
+                  </View>
+                </View>
               ) : null}
             </Card>
           </View>
-        ) : null}
-      </View>
+        )}
+
+        {/* ========================================================== */}
+        {/* PHASE 2: DURING                                            */}
+        {/* ========================================================== */}
+        {phase === 'during' && (
+          <View style={styles.section}>
+            <Card style={styles.card}>
+              <SectionHeader
+                title="Trade In Progress"
+                subtitle="Log timestamped check-in notes and emotions without calling AI. Click 'Ask coach' whenever you want advice."
+              />
+
+              {entry ? (
+                <View style={styles.tradeSnapshot}>
+                  <ThemedText variant="bodyStrong">
+                    {entry.pair} • {entry.direction.toUpperCase()} • Entry: {entry.planned_entry ?? '—'} • Stop: {entry.stop_loss ?? '—'} • Target: {entry.take_profit ?? '—'}
+                  </ThemedText>
+                </View>
+              ) : (
+                <ThemedText variant="caption" tone="loss">
+                  No plan saved yet. Go to Before tab and save the trade plan first.
+                </ThemedText>
+              )}
+
+              {/* Check-ins list */}
+              <View style={{ marginTop: 12, gap: 10 }}>
+                {entry?.checkins.map((chk, index) => (
+                  <View key={index} style={styles.checkinCard}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <ThemedText variant="caption" tone="textTertiary">
+                        {new Date(chk.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </ThemedText>
+                      {chk.mood ? <Pill label={chk.mood} tone="neutral" /> : null}
+                    </View>
+                    <ThemedText variant="body" style={{ marginTop: 4 }}>
+                      {chk.text}
+                    </ThemedText>
+
+                    {chk.reply ? (
+                      <View style={styles.coachReply}>
+                        <ThemedText variant="caption" tone="accentText" style={{ fontWeight: '700' }}>
+                          Coach:
+                        </ThemedText>
+                        <ThemedText variant="caption" tone="text">
+                          {chk.reply}
+                        </ThemedText>
+                      </View>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        label={askingCoachId === index ? 'Consulting Coach…' : 'Ask coach'}
+                        loading={askingCoachId === index}
+                        onPress={() => handleAskCoach(index, chk)}
+                        style={{ alignSelf: 'flex-start', marginTop: 6 }}
+                      />
+                    )}
+                  </View>
+                ))}
+              </View>
+
+              {/* New note input */}
+              <View style={{ marginTop: 16 }}>
+                <ThemedText variant="caption" tone="textSecondary" style={{ marginBottom: 4 }}>
+                  Current Mood:
+                </ThemedText>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                  {MOODS.map((m) => (
+                    <SelectablePill
+                      key={m}
+                      label={m}
+                      selected={checkinMood === m}
+                      tone="neutral"
+                      onPress={() => setCheckinMood(m)}
+                    />
+                  ))}
+                </View>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <ThemedText variant="caption" tone="textSecondary">
+                    Check-in Note
+                  </ThemedText>
+                  <VoiceButton
+                    label="Speak note"
+                    onText={(spoken) => setCheckinText((prev) => (prev ? `${prev} ${spoken}` : spoken))}
+                  />
+                </View>
+                <Field
+                  label=""
+                  value={checkinText}
+                  onChangeText={setCheckinText}
+                  placeholder="How is the trade going? Are you feeling nervous, tempted to move stop..."
+                  multiline
+                  numberOfLines={2}
+                />
+
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                  <Button
+                    variant="primary"
+                    label={busy ? 'Saving…' : 'Save Note (No AI)'}
+                    loading={busy}
+                    onPress={handleAddCheckin}
+                  />
+                  <Button
+                    variant="secondary"
+                    label={uploadingShot ? 'Uploading…' : 'Add During Screenshot'}
+                    loading={uploadingShot}
+                    onPress={() => handleAddScreenshot('during')}
+                  />
+                </View>
+              </View>
+            </Card>
+          </View>
+        )}
+
+        {/* ========================================================== */}
+        {/* PHASE 3: AFTER (Close & Review)                            */}
+        {/* ========================================================== */}
+        {phase === 'after' && (
+          <View style={styles.section}>
+            <Card style={styles.card}>
+              <SectionHeader
+                title="Trade Close & Review"
+                subtitle="2 screenshots required (entry & exit) to close a manual trade. Read exit from screenshot, voice, or type."
+              />
+
+              {/* Requirement reminder */}
+              <View style={[styles.requirementBox, canClose ? styles.reqMet : styles.reqMissing]}>
+                <Ionicons
+                  name={canClose ? 'checkmark-circle' : 'information-circle'}
+                  size={20}
+                  color={canClose ? '#0F7A4B' : '#B3322A'}
+                />
+                <ThemedText variant="caption" tone={canClose ? 'gain' : 'loss'} style={{ flex: 1, fontWeight: '600' }}>
+                  Screenshots: {shots.length} of 5 attached {canClose ? '(Requirement met)' : '(Need at least 2 to close)'}
+                </ThemedText>
+              </View>
+
+              <View style={styles.row}>
+                <View style={{ flex: 1 }}>
+                  <Field
+                    label="Exit Price *"
+                    value={exitPrice}
+                    onChangeText={setExitPrice}
+                    placeholder="e.g. 1.0910"
+                    keyboardType="numeric"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Field
+                    label="Result P/L ($) *"
+                    value={resultPl}
+                    onChangeText={setResultPl}
+                    placeholder="e.g. 60 or -25"
+                    keyboardType="numeric"
+                  />
+                </View>
+              </View>
+
+              <View style={{ marginTop: 8 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <ThemedText variant="caption" tone="textSecondary">
+                    Lesson Learned
+                  </ThemedText>
+                  <VoiceButton
+                    label="Speak lesson"
+                    onText={(spoken) => setLesson((prev) => (prev ? `${prev} ${spoken}` : spoken))}
+                  />
+                </View>
+                <Field
+                  label=""
+                  value={lesson}
+                  onChangeText={setLesson}
+                  placeholder="What did this trade teach you about your setup or psychology?"
+                  multiline
+                  numberOfLines={2}
+                />
+              </View>
+
+              <View style={{ marginTop: 8 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <ThemedText variant="caption" tone="textSecondary">
+                    Closing Thoughts
+                  </ThemedText>
+                  <VoiceButton
+                    label="Speak thoughts"
+                    onText={(spoken) => setThoughts((prev) => (prev ? `${prev} ${spoken}` : spoken))}
+                  />
+                </View>
+                <Field
+                  label=""
+                  value={thoughts}
+                  onChangeText={setThoughts}
+                  placeholder="Any extra observations or notes on market behavior..."
+                  multiline
+                  numberOfLines={2}
+                />
+              </View>
+
+              <View style={{ marginTop: 8 }}>
+                <ThemedText variant="caption" tone="textSecondary" style={{ marginBottom: 4 }}>
+                  Emotion After Trade:
+                </ThemedText>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                  {MOODS.map((m) => (
+                    <SelectablePill
+                      key={m}
+                      label={m}
+                      selected={emotionAfter === m}
+                      tone="neutral"
+                      onPress={() => setEmotionAfter(m)}
+                    />
+                  ))}
+                </View>
+              </View>
+
+              {/* Exit screenshot button */}
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+                <Button
+                  variant="secondary"
+                  label={uploadingShot ? 'Analyzing…' : 'Add Exit Screenshot'}
+                  loading={uploadingShot}
+                  onPress={() => handleAddScreenshot('after')}
+                />
+              </View>
+
+              {/* Screenshots gallery */}
+              <View style={[styles.thumbGrid, { marginTop: 12 }]}>
+                {shots.map((shot) => (
+                  <View key={shot.id} style={styles.thumbWrapper}>
+                    {shot.signed_url ? (
+                      <Image source={{ uri: shot.signed_url }} style={styles.thumbImage} resizeMode="cover" />
+                    ) : (
+                      <View style={[styles.thumbImage, styles.thumbPlaceholder]}>
+                        <Ionicons name="image-outline" size={24} color="#8A948F" />
+                      </View>
+                    )}
+                    <Pressable
+                      style={styles.deleteThumbBtn}
+                      onPress={() => handleDeleteScreenshot(shot)}
+                      accessibilityLabel="Delete screenshot"
+                    >
+                      <Ionicons name="close" size={14} color="#FFFFFF" />
+                    </Pressable>
+                    <ThemedText variant="caption" tone="textTertiary" style={{ textAlign: 'center', marginTop: 2 }}>
+                      {shot.phase}
+                    </ThemedText>
+                  </View>
+                ))}
+              </View>
+
+              {/* Close trade CTA */}
+              <View style={{ marginTop: 20 }}>
+                <Button
+                  variant="primary"
+                  disabled={!canClose || isClosed || busy}
+                  loading={busy}
+                  label={
+                    isClosed
+                      ? 'Trade is Closed (Locked)'
+                      : canClose
+                        ? 'Close Trade (Lock & Write to Trades)'
+                        : `Need ${2 - shots.length} more screenshot(s) to close`
+                  }
+                  onPress={handleCloseTrade}
+                />
+              </View>
+            </Card>
+          </View>
+        )}
+      </ScrollView>
     </Sheet>
   );
 }
 
 const sheet = (t: Theme) =>
   StyleSheet.create({
-    form: {
+    container: {
+      paddingBottom: 40,
       gap: t.space.three,
     },
-    footer: {
+    phaseTabs: {
+      flexDirection: 'row',
+      backgroundColor: t.color.bgSunken,
+      borderRadius: t.radius.pill,
+      padding: 4,
+      marginBottom: t.space.two,
+    },
+    phaseTab: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 8,
+      borderRadius: t.radius.pill,
+    },
+    phaseTabActive: {
+      backgroundColor: t.color.surface,
+      ...(t.scheme === 'dark' ? t.elevation[1] : {}),
+    },
+    phaseTabText: {
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    section: {
+      gap: t.space.two,
+    },
+    card: {
       gap: t.space.two,
     },
     row: {
       flexDirection: 'row',
       gap: t.space.two,
+      alignItems: 'flex-start',
     },
-    flexOne: {
-      flex: 1,
+    dirPills: {
+      justifyContent: 'center',
+      paddingTop: 4,
     },
-    segmentRow: {
+    shotHeaderRow: {
       flexDirection: 'row',
-      gap: t.space.two,
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: 12,
     },
-    segment: {
-      flex: 1,
-      height: 48,
+    thumbGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      marginTop: 8,
+    },
+    thumbWrapper: {
+      position: 'relative',
+      width: 70,
+    },
+    thumbImage: {
+      width: 70,
+      height: 70,
       borderRadius: t.radius.md,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: t.color.borderStrong,
       backgroundColor: t.color.bgSunken,
+    },
+    thumbPlaceholder: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: t.color.border,
+    },
+    deleteThumbBtn: {
+      position: 'absolute',
+      top: -4,
+      right: -4,
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      backgroundColor: '#B3322A',
       alignItems: 'center',
       justifyContent: 'center',
     },
-    segmentBuy: {
-      backgroundColor: t.color.gain,
-      borderColor: t.color.gain,
-    },
-    segmentSell: {
-      backgroundColor: t.color.loss,
-      borderColor: t.color.loss,
-    },
-    pressed: {
-      opacity: 0.75,
-    },
-    textArea: {
-      height: 120,
-      paddingTop: t.space.two,
-      textAlignVertical: 'top',
-    },
-    textAreaSmall: {
-      height: 76,
-      paddingTop: t.space.two,
-      textAlignVertical: 'top',
-    },
-    errorBanner: {
-      backgroundColor: t.color.lossSoft,
-      borderColor: t.color.loss,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderRadius: t.radius.md,
+    gradeBox: {
+      marginTop: 12,
       padding: t.space.three,
+      borderRadius: t.radius.md,
+      backgroundColor: t.color.bgSunken,
+      borderWidth: 1,
+      borderColor: t.color.border,
     },
-    resultCard: {
-      gap: t.space.three,
+    warningBox: {
+      marginTop: 8,
+      padding: t.space.two,
+      borderRadius: t.radius.sm,
+      backgroundColor: t.color.lossSoft,
+      borderWidth: 1,
+      borderColor: t.color.loss,
+      gap: 2,
     },
-    gradeRow: {
-      flexDirection: 'row',
-      alignItems: 'baseline',
-      gap: t.space.two,
-    },
-    flagRow: {
+    statusBox: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: t.space.two,
+      gap: t.space.one,
+      padding: t.space.two,
+      backgroundColor: '#E0F2E8',
+      borderRadius: t.radius.sm,
     },
-    ruleRow: {
+    errorBox: {
       flexDirection: 'row',
-      gap: t.space.two,
+      alignItems: 'center',
+      gap: t.space.one,
+      padding: t.space.two,
+      backgroundColor: t.color.lossSoft,
+      borderRadius: t.radius.sm,
+    },
+    tradeSnapshot: {
+      padding: t.space.two,
+      backgroundColor: t.color.bgSunken,
+      borderRadius: t.radius.sm,
+      borderLeftWidth: 3,
+      borderLeftColor: t.color.accent,
+    },
+    checkinCard: {
+      padding: t.space.two,
+      backgroundColor: t.color.bgSunken,
+      borderRadius: t.radius.sm,
+      borderWidth: 1,
+      borderColor: t.color.border,
+    },
+    coachReply: {
+      marginTop: 6,
+      padding: t.space.one,
+      backgroundColor: t.color.surface,
+      borderRadius: t.radius.sm,
+      borderLeftWidth: 2,
+      borderLeftColor: t.color.accent,
+    },
+    requirementBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.space.one,
+      padding: t.space.two,
+      borderRadius: t.radius.sm,
+      borderWidth: 1,
+      marginBottom: 6,
+    },
+    reqMet: {
+      backgroundColor: '#E0F2E8',
+      borderColor: '#0F7A4B',
+    },
+    reqMissing: {
+      backgroundColor: t.color.lossSoft,
+      borderColor: '#B3322A',
     },
   });

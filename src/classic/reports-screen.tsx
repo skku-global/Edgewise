@@ -177,6 +177,15 @@ export default function ReportsScreen() {
     },
   ];
 
+  const totalTrades = scoped.length;
+  const withMood = scoped.filter((t) => t.moods && t.moods.length > 0).length;
+  const moodCoveragePct = totalTrades > 0 ? Math.round((withMood / totalTrades) * 100) : 0;
+
+  const fullCoverage = scoped.filter((t) => (t.shot_count ?? (t.shots?.length ?? 0)) >= 2).length;
+  const partialCoverage = scoped.filter((t) => (t.shot_count ?? (t.shots?.length ?? 0)) === 1).length;
+  const missingCoverage = scoped.filter((t) => (t.shot_count ?? (t.shots?.length ?? 0)) === 0).length;
+  const shotCoveragePct = totalTrades > 0 ? Math.round((fullCoverage / totalTrades) * 100) : 0;
+
   return (
     <Screen refreshing={refreshing} onRefresh={refresh}>
       <ScreenHeader
@@ -287,6 +296,31 @@ export default function ReportsScreen() {
               </Card>
             </View>
           ) : null}
+
+          <View>
+            <SectionHeader
+              title="Discipline & coverage"
+              subtitle="Mood tracking and screenshot proof across your trades."
+            />
+            <Card>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
+                <ThemedText variant="body">Mood logged</ThemedText>
+                <ThemedText variant="mono" tone={moodCoveragePct >= 80 ? 'gain' : 'text'}>
+                  {withMood} / {totalTrades} ({moodCoveragePct}%)
+                </ThemedText>
+              </View>
+              <Divider />
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
+                <ThemedText variant="body">Screenshots (≥2 shots)</ThemedText>
+                <ThemedText variant="mono" tone={shotCoveragePct >= 80 ? 'gain' : 'text'}>
+                  {fullCoverage} / {totalTrades} ({shotCoveragePct}%)
+                </ThemedText>
+              </View>
+              <ThemedText variant="caption" tone="textTertiary" style={{ marginTop: 4 }}>
+                {partialCoverage} with 1 screenshot • {missingCoverage} with no screenshots
+              </ThemedText>
+            </Card>
+          </View>
 
           <BreakdownCard
             title="By pair"

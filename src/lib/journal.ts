@@ -14,13 +14,14 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { getCachedAiReading, processShotImage, saveCachedAiReading } from '@/lib/shots';
 import { supabase } from '@/lib/supabase';
 
 export type Direction = 'buy' | 'sell';
 export type EntryStatus = 'planned' | 'open' | 'closed';
 
 export type RuleResult = { rule: string; met: boolean; evidence: string };
-export type Checkin = { at: string; text: string; reply?: string };
+export type Checkin = { at: string; text: string; mood?: string; progress?: string; reply?: string };
 
 export type JournalEntry = {
   id: number;
@@ -43,6 +44,11 @@ export type JournalEntry = {
   feelings_after: string | null;
   review: string | null;
   closed_at: string | null;
+  trade_id: number | null;
+  exit_price: number | null;
+  lesson: string | null;
+  thoughts: string | null;
+  emotion_after: string | null;
 };
 
 export type PlanInput = {
@@ -80,6 +86,44 @@ export function parseRules(text: string): string[] {
 
 export async function loadRules(): Promise<string[]> {
   try {
+    const { data: authData } = await supabase.auth.getUser();
+    const userId = authData?.user?.id;
+    if (userId) {
+      const { data, error } = await supabase
+        .from('user_settings')
+        .select('rules')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (!error && data && Array.isArray(data.rules) && data.rules.length > 0) {
+        AsyncStorage.setItem(RULES_KEY, JSON.stringify(data.rules)).catch(() => {});
+        return data.rules as string[];
+      }
+
+      // One-time copy from AsyncStorage if user_settings has no rules yet
+      const raw = await AsyncStorage.getItem(RULES_KEY);
+      let rulesToSync = DEFAULT_RULES;
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            rulesToSync = parsed;
+          }
+        } catch {}
+      }
+
+      await supabase.from('user_settings').upsert({
+        user_id: userId,
+        rules: rulesToSync,
+        updated_at: new Date().toISOString(),
+      });
+      return rulesToSync;
+    }
+  } catch (err) {
+    console.error('loadRules error:', err);
+  }
+
+  try {
     const raw = await AsyncStorage.getItem(RULES_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as unknown;
@@ -96,8 +140,17 @@ export async function loadRules(): Promise<string[]> {
 export async function saveRules(rules: string[]): Promise<void> {
   try {
     await AsyncStorage.setItem(RULES_KEY, JSON.stringify(rules));
+    const { data: authData } = await supabase.auth.getUser();
+    const userId = authData?.user?.id;
+    if (userId) {
+      await supabase.from('user_settings').upsert({
+        user_id: userId,
+        rules,
+        updated_at: new Date().toISOString(),
+      });
+    }
   } catch (err) {
-    console.error(err);
+    console.error('saveRules error:', err);
   }
 }
 
@@ -384,7 +437,7 @@ export async function reviewTrade(
 const num = (value: unknown): number | null =>
   value === null || value === undefined || value === '' ? null : Number(value);
 
-function normalize(row: Record<string, unknown>): JournalEntry {
+export function normalize(row: Record<string, unknown>): JournalEntry {
   return {
     id: Number(row.id),
     created_at: String(row.created_at),
@@ -406,6 +459,11 @@ function normalize(row: Record<string, unknown>): JournalEntry {
     feelings_after: (row.feelings_after as string | null) ?? null,
     review: (row.review as string | null) ?? null,
     closed_at: (row.closed_at as string | null) ?? null,
+    trade_id: num(row.trade_id),
+    exit_price: num(row.exit_price),
+    lesson: (row.lesson as string | null) ?? null,
+    thoughts: (row.thoughts as string | null) ?? null,
+    emotion_after: (row.emotion_after as string | null) ?? null,
   };
 }
 
@@ -442,13 +500,36 @@ export async function updateEntry(
     .from('journal_entries')
     .update(patch)
     .eq('id', id)
-    .neq('status', 'closed') // a closed trade can never be edited
     .select()
     .single();
   if (error) {
     throw error;
   }
   return normalize(data as Record<string, unknown>);
+}
+
+export async function closeEntryViaRpc(params: {
+  entryId: number;
+  exitPrice: number;
+  resultPl: number;
+  lesson?: string;
+  thoughts?: string;
+  emotionAfter?: string;
+  moods?: string[];
+}): Promise<number> {
+  const { data, error } = await supabase.rpc('close_entry', {
+    p_entry_id: params.entryId,
+    p_exit_price: params.exitPrice,
+    p_result_pl: params.resultPl,
+    p_lesson: params.lesson ?? null,
+    p_thoughts: params.thoughts ?? null,
+    p_emotion_after: params.emotionAfter ?? null,
+    p_moods: params.moods ?? [],
+  });
+  if (error) {
+    throw error;
+  }
+  return Number(data);
 }
 
 /** Plans and open trades, newest first. */
@@ -486,23 +567,37 @@ export type ExtractedTrade = {
  * Never saved from here: the screen shows them for you to check first.
  */
 export async function extractTradeFromImage(uri: string, mimeHint?: string): Promise<ExtractedTrade> {
-  // Read the picked file into raw bytes.
-  const blob = await (await fetch(uri)).blob();
-  const mime =
-    mimeHint && mimeHint.startsWith('image/')
-      ? mimeHint
-      : blob.type.startsWith('image/')
-        ? blob.type
-        : 'image/jpeg';
-  if (blob.size === 0) {
-    throw new Error('That image was empty. Pick it again.');
+  let processedHash: string | null = null;
+  let bodyToSend: BodyInit;
+  let contentType = 'image/webp';
+
+  try {
+    const processed = await processShotImage(uri);
+    processedHash = processed.hash;
+    bodyToSend = await (await fetch(processed.uri)).blob();
+    contentType = 'image/webp';
+
+    if (processedHash) {
+      const cached = await getCachedAiReading(processedHash);
+      if (cached && typeof cached === 'object' && ('pair' in cached || 'direction' in cached)) {
+        return cached as ExtractedTrade;
+      }
+    }
+  } catch (err) {
+    console.warn('Fallback raw read for extractTradeFromImage:', err);
+    const blob = await (await fetch(uri)).blob();
+    if (blob.size === 0) {
+      throw new Error('That image was empty. Pick it again.');
+    }
+    bodyToSend = blob;
+    contentType = mimeHint && mimeHint.startsWith('image/') ? mimeHint : blob.type.startsWith('image/') ? blob.type : 'image/jpeg';
   }
 
   // STEP 1-4: endpoint, method, headers (the image type), body (the bytes)
   const response = await fetch(proxyBase() + '/v1/extract-trade', {
     method: 'POST',
-    headers: { 'content-type': mime },
-    body: blob,
+    headers: { 'content-type': contentType },
+    body: bodyToSend,
   });
 
   // STEP 5: 400 = unsupported image, 413 = too large, 404 = old proxy, 429 = free limit.
@@ -515,7 +610,7 @@ export async function extractTradeFromImage(uri: string, mimeHint?: string): Pro
 
   const direction =
     parsed.direction === 'buy' || parsed.direction === 'sell' ? parsed.direction : null;
-  return {
+  const result: ExtractedTrade = {
     pair: parsed.pair ? String(parsed.pair).toUpperCase() : null,
     direction,
     entry_price: num(parsed.entry_price),
@@ -526,4 +621,10 @@ export async function extractTradeFromImage(uri: string, mimeHint?: string): Pro
     take_profit: num(parsed.take_profit),
     notes: parsed.notes ? String(parsed.notes) : null,
   };
+
+  if (processedHash) {
+    saveCachedAiReading(processedHash, result as unknown as Record<string, unknown>).catch(() => {});
+  }
+
+  return result;
 }

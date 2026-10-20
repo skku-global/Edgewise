@@ -15,6 +15,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 
 import type { PickedImage } from '@/lib/coach-vision';
+import { getCachedAiReading, processShotImage, saveCachedAiReading } from '@/lib/shots';
 
 export const MAX_IMAGES = 6;
 const MAX_TOTAL_BYTES = 12 * 1024 * 1024;
@@ -46,22 +47,40 @@ export async function pickScreenshots(): Promise<PickedImage[]> {
   }));
 }
 
-export async function readAsBase64(image: PickedImage): Promise<{ mime: string; data: string; bytes: number }> {
-  const blob = await (await fetch(image.uri)).blob();
-  if (blob.size === 0) {
-    throw new Error(`"${image.name}" was empty. Pick it again.`);
+/**
+ * Stage 5: Smaller uploads everywhere images are sent.
+ * Resizes to max 1280px, converts to WebP (~0.7 quality), and returns hash.
+ */
+export async function readAsBase64(
+  image: PickedImage,
+): Promise<{ mime: string; data: string; bytes: number; hash: string }> {
+  try {
+    const processed = await processShotImage(image.uri);
+    return {
+      mime: 'image/webp',
+      data: processed.base64,
+      bytes: processed.bytes,
+      hash: processed.hash,
+    };
+  } catch (err) {
+    console.warn('Fallback to raw image reading:', err);
+    const blob = await (await fetch(image.uri)).blob();
+    if (blob.size === 0) {
+      throw new Error(`"${image.name}" was empty. Pick it again.`);
+    }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error(`Could not read "${image.name}".`));
+      reader.readAsDataURL(blob);
+    });
+    return {
+      mime: image.mime,
+      data: dataUrl.slice(dataUrl.indexOf(',') + 1),
+      bytes: blob.size,
+      hash: '',
+    };
   }
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error(`Could not read "${image.name}".`));
-    reader.readAsDataURL(blob);
-  });
-  return {
-    mime: image.mime,
-    data: dataUrl.slice(dataUrl.indexOf(',') + 1),
-    bytes: blob.size,
-  };
 }
 
 const num = (value: unknown): number | null =>
@@ -77,13 +96,23 @@ export async function extractPlanFromImages(images: PickedImage[]): Promise<Extr
 
   const encoded = [];
   let total = 0;
+  const hashes: string[] = [];
   for (const image of images.slice(0, MAX_IMAGES)) {
     const item = await readAsBase64(image);
     total += item.bytes;
+    if (item.hash) hashes.push(item.hash);
     encoded.push({ mime: item.mime, data: item.data });
   }
   if (total > MAX_TOTAL_BYTES) {
     throw new Error('Those screenshots are too large together (over 12 MB). Pick fewer or smaller ones.');
+  }
+
+  const primaryHash = hashes[0];
+  if (primaryHash) {
+    const cached = await getCachedAiReading(primaryHash);
+    if (cached && typeof cached === 'object' && ('pair' in cached || 'direction' in cached)) {
+      return cached as ExtractedPlan;
+    }
   }
 
   // STEP 1-4: endpoint, method, headers, body
@@ -114,7 +143,7 @@ export async function extractPlanFromImages(images: PickedImage[]): Promise<Extr
   }
   const parsed = JSON.parse(body.slice(start, end + 1)) as Record<string, unknown>;
 
-  return {
+  const plan: ExtractedPlan = {
     pair: parsed.pair ? String(parsed.pair).toUpperCase() : null,
     direction: parsed.direction === 'buy' || parsed.direction === 'sell' ? parsed.direction : null,
     entry_price: num(parsed.entry_price),
@@ -123,6 +152,12 @@ export async function extractPlanFromImages(images: PickedImage[]): Promise<Extr
     size: num(parsed.size),
     notes: parsed.notes ? String(parsed.notes) : null,
   };
+
+  if (primaryHash) {
+    saveCachedAiReading(primaryHash, plan as unknown as Record<string, unknown>).catch(() => {});
+  }
+
+  return plan;
 }
 
 /* ------------------------------------------------------------------ */
@@ -148,13 +183,23 @@ export async function extractTradesFromImages(images: PickedImage[]): Promise<Hi
 
   const encoded = [];
   let total = 0;
+  const hashes: string[] = [];
   for (const image of images.slice(0, MAX_IMAGES)) {
     const item = await readAsBase64(image);
     total += item.bytes;
+    if (item.hash) hashes.push(item.hash);
     encoded.push({ mime: item.mime, data: item.data });
   }
   if (total > MAX_TOTAL_BYTES) {
     throw new Error('Those screenshots are too large together (over 12 MB). Pick fewer or smaller ones.');
+  }
+
+  const primaryHash = hashes[0];
+  if (primaryHash) {
+    const cached = await getCachedAiReading(primaryHash);
+    if (cached && typeof cached === 'object' && Array.isArray((cached as Record<string, unknown>).trades)) {
+      return (cached as Record<string, unknown>).trades as HistoryTrade[];
+    }
   }
 
   // STEP 1-4: endpoint, method, headers, body
@@ -185,7 +230,7 @@ export async function extractTradesFromImages(images: PickedImage[]): Promise<Hi
   }
   const parsed = JSON.parse(body.slice(start, end + 1)) as { trades?: Record<string, unknown>[] };
 
-  return (parsed.trades ?? []).map((row) => ({
+  const trades: HistoryTrade[] = (parsed.trades ?? []).map((row) => ({
     pair: row.pair ? String(row.pair).toUpperCase() : null,
     direction: row.direction === 'buy' || row.direction === 'sell' ? row.direction : null,
     entry_price: num(row.entry_price),
@@ -194,4 +239,10 @@ export async function extractTradesFromImages(images: PickedImage[]): Promise<Hi
     profit_loss: num(row.profit_loss),
     closed_at: row.closed_at ? String(row.closed_at) : null,
   }));
+
+  if (primaryHash) {
+    saveCachedAiReading(primaryHash, { trades } as unknown as Record<string, unknown>).catch(() => {});
+  }
+
+  return trades;
 }

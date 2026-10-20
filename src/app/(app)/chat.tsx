@@ -27,6 +27,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -55,6 +56,7 @@ import {
 } from '@/lib/chat-save';
 import { askWithImage, pickScreenshots, type PickedImage } from '@/lib/coach-vision';
 import { useThemedStyles } from '@/lib/styles';
+import { supabase } from '@/lib/supabase';
 import { buildTradingContext, fetchTradingContext, type ContextTrade } from '@/lib/trade-context';
 import { transcribeOrQueue } from '@/lib/voice-queue';
 
@@ -89,6 +91,7 @@ export default function ChatScreen() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [trades, setTrades] = useState<ContextTrade[] | null>(null);
+  const [briefing, setBriefing] = useState<string>('');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
@@ -105,16 +108,62 @@ export default function ChatScreen() {
   const loadContext = useCallback(async () => {
     try {
       setLoadError(null);
-      setTrades(await fetchTradingContext());
+      const ctx = await fetchTradingContext();
+      setTrades(ctx);
+      setBriefing(buildTradingContext(ctx));
     } catch (err) {
       console.error(err);
       setLoadError("Couldn't load your trades, so answers would be guesswork.");
     }
   }, []);
 
+  const loadHistory = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('chat_messages')
+        .select('id, role, content, created_at')
+        .order('created_at', { ascending: true });
+      if (!error && data && data.length > 0) {
+        setMessages(
+          data.map((m) => ({
+            id: `db-${m.id}`,
+            role: m.role as 'user' | 'assistant',
+            content: String(m.content),
+          })),
+        );
+      }
+    } catch (err) {
+      console.error('Failed to load chat history:', err);
+    }
+  }, []);
+
   useEffect(() => {
     loadContext();
-  }, [loadContext]);
+    loadHistory();
+  }, [loadContext, loadHistory]);
+
+  const handleClearHistory = useCallback(() => {
+    Alert.alert(
+      'Clear chat history?',
+      'This will delete all saved messages from your chat history.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const { error } = await supabase.from('chat_messages').delete().neq('id', 0);
+              if (error) console.error('Clear chat history error:', error);
+              setMessages([]);
+            } catch (err) {
+              console.error(err);
+            }
+          },
+        },
+      ],
+    );
+  }, []);
 
   /** Tap once to start recording, tap again to stop and turn it into text. */
   const toggleMic = useCallback(async () => {
@@ -224,6 +273,13 @@ export default function ChatScreen() {
       setAttached([]);
       setSending(true);
 
+      supabase
+        .from('chat_messages')
+        .insert([{ role: 'user', content: question }])
+        .then(({ error }) => {
+          if (error) console.error('Failed to save user chat message:', error);
+        });
+
       try {
         // "Save to journal", or a message that starts with log / save / add / journal:
         // turn it into a record and ask you to confirm. If it turns out to be a
@@ -234,12 +290,19 @@ export default function ChatScreen() {
             images,
           );
           if (entry.kind !== 'none') {
+            const summary = entry.summary || 'Here is what I understood. Check it, then save.';
+            supabase
+              .from('chat_messages')
+              .insert([{ role: 'assistant', content: summary }])
+              .then(({ error }) => {
+                if (error) console.error('Failed to save assistant chat message:', error);
+              });
             setMessages((current) => [
               ...current,
               {
                 id: `p-${current.length}`,
                 role: 'assistant',
-                content: entry.summary || 'Here is what I understood. Check it, then save.',
+                content: summary,
                 pending: entry,
                 pendingState: 'open',
               },
@@ -248,17 +311,26 @@ export default function ChatScreen() {
           }
         }
 
-        const briefing = buildTradingContext(trades);
+        const effectiveBriefing = briefing || buildTradingContext(trades);
         const answer =
           images.length > 0
-            ? await askWithImage(briefing, history, images)
-            : await askClaude(briefing, history);
+            ? await askWithImage(effectiveBriefing, history, images)
+            : await askClaude(effectiveBriefing, history);
+
+        const replyContent = answer.trim() || '(Claude returned an empty reply.)';
+        supabase
+          .from('chat_messages')
+          .insert([{ role: 'assistant', content: replyContent }])
+          .then(({ error }) => {
+            if (error) console.error('Failed to save assistant reply:', error);
+          });
+
         setMessages((current) => [
           ...current,
           {
             id: `a-${current.length}`,
             role: 'assistant',
-            content: answer.trim() || '(Claude returned an empty reply.)',
+            content: replyContent,
           },
         ]);
       } catch (err) {
@@ -279,7 +351,7 @@ export default function ChatScreen() {
         setSending(false);
       }
     },
-    [attached, messages, sending, trades],
+    [attached, briefing, messages, sending, trades],
   );
 
   const loading = trades === null && loadError === null;
@@ -316,6 +388,16 @@ export default function ChatScreen() {
                 : 'Loading your trading history…'
             }
           />
+
+          {messages.length > 0 ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              label="Clear history"
+              onPress={handleClearHistory}
+              style={{ alignSelf: 'flex-end', marginBottom: 8 }}
+            />
+          ) : null}
 
           {!keyed ? (
             <Card style={styles.notice}>

@@ -1,71 +1,93 @@
 import React from 'react';
 import { Text, View, useWindowDimensions } from 'react-native';
-import { Button, H1, OptionCard, Page, SectionLabel, Wave } from './ui';
+import { Button, H1, OptionCard, Page, SectionLabel } from './ui';
 import { Rise } from './motion';
 import { colors } from './theme';
 
-// WIRE: replace with the signed-in user's name
-const USER_NAME = 'chill';
-
 export type HomeProps = {
   tradeCount?: number;
+  userName?: string;
+  onAuto?: () => void;
+  onManual?: () => void;
+  // Backward compatibility
   onPlan?: () => void;
   onConnect?: () => void;
   onScreenshot?: () => void;
   onMany?: () => void;
-  onManual?: () => void;
 };
 
-export default function HomeScreen({ tradeCount = 0, onPlan, onConnect, onScreenshot, onMany, onManual }: HomeProps) {
+export default function HomeScreen({
+  tradeCount = 0,
+  userName = 'Trader',
+  onAuto,
+  onManual,
+  onPlan,
+  onConnect,
+}: HomeProps) {
   const { width } = useWindowDimensions();
   const small = width < 600;
+
+  const handleManual = onManual ?? onPlan;
+  const handleAuto = onAuto ?? onConnect;
+
   return (
     <Page>
       <Rise>
-        <H1>Hi {USER_NAME}</H1>
+        <H1>Hi {userName}</H1>
       </Rise>
       <Rise delay={150}>
         <Text style={{ marginTop: 8, fontSize: 19, color: colors.muted }}>
-          Log your first trade to start building your edge.
+          Log your trades with discipline, psychology, and evidence.
         </Text>
       </Rise>
 
       <Rise delay={300} style={{ marginTop: 32 }}>
+        <SectionLabel>Add or import trades</SectionLabel>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16, marginTop: 14 }}>
+          <OptionCard
+            icon="create-outline"
+            tag="Full Flow"
+            title="Manual Trade (Journal)"
+            desc="One place: plan it before, track notes during, and review exit with screenshots."
+            onPress={handleManual}
+          />
+          <OptionCard
+            icon="hardware-chip-outline"
+            tag="Auto"
+            title="Auto (MetaTrader & Reports)"
+            desc="Connect MetaTrader for live deal auto-sync or import your MT5 statement HTML."
+            onPress={handleAuto}
+          />
+        </View>
+      </Rise>
+
+      <Rise delay={450} style={{ marginTop: 28 }}>
         <View
           style={{
             flexDirection: 'row',
             flexWrap: 'wrap',
             alignItems: 'center',
             justifyContent: 'space-between',
-            gap: 24,
-            padding: small ? 24 : 32,
-            borderRadius: 24,
-            backgroundColor: colors.mint,
+            gap: 20,
+            padding: small ? 20 : 28,
+            borderRadius: 20,
+            backgroundColor: colors.card,
+            borderWidth: 1,
+            borderColor: colors.border,
           }}
         >
-          <View style={{ flexShrink: 1, maxWidth: 520 }}>
-            <Text style={{ fontSize: 14, fontWeight: '600', color: colors.onMint }}>
-              Step 1 of your journal: plan it before
+          <View style={{ flexShrink: 1, maxWidth: 560 }}>
+            <Text style={{ fontSize: 13, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, color: colors.green }}>
+              Evidence-based journaling
             </Text>
-            <Text style={{ marginTop: 8, fontSize: small ? 32 : 40, fontWeight: '700', letterSpacing: -1, color: colors.onMint }}>
-              Plan a trade
+            <Text style={{ marginTop: 6, fontSize: small ? 22 : 26, fontWeight: '700', letterSpacing: -0.5, color: colors.ink }}>
+              Before • During • After
             </Text>
-            <Text style={{ marginTop: 10, marginBottom: 18, fontSize: 18, color: colors.onMint }}>
-              Say it or type it. Get it written down before you click.
+            <Text style={{ marginTop: 6, fontSize: 15, color: colors.muted }}>
+              Manual trades require at least 2 screenshots (entry and exit) to close. Speak, type, or attach charts to keep your trade log accountable.
             </Text>
-            <Button variant="dark" icon="mic-outline" label="Start planning" onPress={onPlan} style={{ alignSelf: 'flex-start' }} />
           </View>
-          <Wave />
-        </View>
-      </Rise>
-
-      <Rise delay={450} style={{ marginTop: 44 }}>
-        <SectionLabel>Add your trades</SectionLabel>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16, marginTop: 12 }}>
-          <OptionCard icon="hardware-chip-outline" tag="Fastest" title="Connect MetaTrader" desc="Auto-sync. Closed trades arrive on their own." onPress={onConnect} />
-          <OptionCard icon="image-outline" title="From a screenshot" desc="Drop one trade screenshot." onPress={onScreenshot} />
-          <OptionCard icon="images-outline" title="Many from history" desc="Add several history screenshots at once." onPress={onMany} />
-          <OptionCard icon="create-outline" title="By hand" desc="Type a trade in yourself." onPress={onManual} />
+          <Button variant="primary" icon="add" label="Start a trade" onPress={handleManual} />
         </View>
       </Rise>
 
@@ -79,7 +101,7 @@ export default function HomeScreen({ tradeCount = 0, onPlan, onConnect, onScreen
             </View>
             <Text style={{ marginTop: 14, fontSize: 20, fontWeight: '600', color: colors.ink }}>No trades yet</Text>
             <Text style={{ marginTop: 4, color: colors.muted, textAlign: 'center' }}>
-              Connect MetaTrader and your closed trades will show up here.
+              Add a manual plan or connect MetaTrader to see your trades and insights here.
             </Text>
           </View>
         </Rise>

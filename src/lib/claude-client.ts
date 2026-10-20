@@ -18,9 +18,6 @@
  * decides what to render, so the UI never shows a dead send button.
  */
 
-const MESSAGES_URL = "https://api.anthropic.com/v1/messages";
-const ANTHROPIC_VERSION = "2023-06-01";
-
 /** Overridable so the model can be changed without touching code. */
 const MODEL = (process.env.EXPO_PUBLIC_CLAUDE_MODEL ?? "").trim() || "claude-sonnet-5";
 
@@ -73,18 +70,14 @@ export function getEffectiveProxyUrl(): string {
 }
 
 /**
- * True when a usable key exists: the direct key, or a proxy configured (the
- * proxy owns its key, so this client never needs one).
+ * True when a proxy is configured (the proxy owns its key, so this client never needs one).
  */
 export function hasClaudeKey(): boolean {
-  return (
-    getEffectiveProxyUrl() !== "" ||
-    (process.env.EXPO_PUBLIC_CLAUDE_API_KEY ?? "").trim() !== ""
-  );
+  return getEffectiveProxyUrl() !== "";
 }
 
 /**
- * Calls Claude with the trade briefing and the full conversation so answers
+ * Calls Claude via proxy with the trade briefing and the full conversation so answers
  * can reference earlier trades. Throws on network or API errors; the caller
  * turns the message into UI state.
  */
@@ -92,9 +85,10 @@ export async function askClaude(
   briefing: string,
   history: ClaudeTurn[],
 ): Promise<string> {
-  const directKey = process.env.EXPO_PUBLIC_CLAUDE_API_KEY;
   const proxy = getEffectiveProxyUrl();
-  const key = (directKey ?? "").trim();
+  if (!proxy) {
+    throw new Error("Coach requests need the proxy. Set EXPO_PUBLIC_CLAUDE_PROXY_URL.");
+  }
 
   const messages: ClaudeTurn[] = [
     ...(briefing
@@ -103,14 +97,6 @@ export async function askClaude(
     ...history,
   ];
 
-  // One body for both transports: the proxy forwards it byte for byte, so the
-  // two paths must not be able to drift apart.
-  //
-  // No `thinking` field on purpose. Current models run adaptive thinking when
-  // it is omitted, which is what reasoning over a whole trade history wants,
-  // and omitting it is also the only setting that survives someone pointing
-  // EXPO_PUBLIC_CLAUDE_MODEL at an older model: those need the retired
-  // budget_tokens form, and the current ones reject it with a 400.
   const body = JSON.stringify({
     model: MODEL,
     max_tokens: MAX_TOKENS,
@@ -118,43 +104,17 @@ export async function askClaude(
     system: buildSystemPrompt(),
   });
 
-  if (proxy) {
-    const response = await fetch(proxy.replace(/\/+$/, "") + "/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body,
-    });
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(
-        extractErrorMessage(errorBody) ?? `Claude proxy error ${response.status}`,
-      );
-    }
-    return readReply((await response.json()) as MessagesResponse);
-  }
-
-  if (!key) {
-    throw new Error("No Claude key configured");
-  }
-
-  const response = await fetch(MESSAGES_URL, {
+  const response = await fetch(proxy.replace(/\/+$/, "") + "/v1/messages", {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": key,
-      "anthropic-version": ANTHROPIC_VERSION,
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
+    headers: { "content-type": "application/json" },
     body,
   });
-
   if (!response.ok) {
     const errorBody = await response.text();
-    const message =
-      extractErrorMessage(errorBody) ?? `Claude API error ${response.status}`;
-    throw new Error(message);
+    throw new Error(
+      extractErrorMessage(errorBody) ?? `Claude proxy error ${response.status}`,
+    );
   }
-
   return readReply((await response.json()) as MessagesResponse);
 }
 

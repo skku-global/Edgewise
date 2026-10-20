@@ -1,15 +1,17 @@
 /**
- * A small "Speak" button: record, turn the clip into text through the proxy,
- * and hand the words to `onText`. It never sends or saves anything itself.
+ * A small "Speak" button: record (mono, 16 kHz, low bitrate), turn the clip into text through the proxy,
+ * and hand the words to `onText`.
  */
 
 import { Ionicons } from '@expo/vector-icons';
 import {
   AudioModule,
-  RecordingPresets,
+  AudioQuality,
+  IOSOutputFormat,
   setAudioModeAsync,
   useAudioRecorder,
   useAudioRecorderState,
+  type RecordingOptions,
 } from 'expo-audio';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
@@ -19,6 +21,33 @@ import type { Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useThemedStyles } from '@/lib/styles';
 import { transcribeOrQueue } from '@/lib/voice-queue';
+
+/** Low-bandwidth, speech-optimized recording options (mono, 16 kHz, 32 kbps). */
+const FAST_VOICE_PRESET: RecordingOptions = {
+  extension: '.m4a',
+  sampleRate: 16000,
+  numberOfChannels: 1,
+  bitRate: 32000,
+  android: {
+    extension: '.m4a',
+    outputFormat: 'mpeg4',
+    audioEncoder: 'aac',
+    sampleRate: 16000,
+  },
+  ios: {
+    extension: '.m4a',
+    outputFormat: IOSOutputFormat.MPEG4AAC,
+    audioQuality: AudioQuality.LOW,
+    sampleRate: 16000,
+    linearPCMBitDepth: 16,
+    linearPCMIsBigEndian: false,
+    linearPCMIsFloat: false,
+  },
+  web: {
+    mimeType: 'audio/webm',
+    bitsPerSecond: 32000,
+  },
+};
 
 type VoiceButtonProps = {
   onText: (text: string) => void;
@@ -30,7 +59,7 @@ export function VoiceButton({ onText, disabled, label = 'Speak' }: VoiceButtonPr
   const theme = useTheme();
   const styles = useThemedStyles(sheet);
 
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorder = useAudioRecorder(FAST_VOICE_PRESET);
   const state = useAudioRecorderState(recorder);
   const recording = state.isRecording;
 
@@ -48,13 +77,24 @@ export function VoiceButton({ onText, disabled, label = 'Speak' }: VoiceButtonPr
         if (!uri) {
           throw new Error('The recording was empty. Hold the mic a little longer.');
         }
+
+        // Upload immediately on stop without freezing form input
         setBusy(true);
-        const result = await transcribeOrQueue(uri);
-        if (result.queued) {
-          setNotice('No internet. Saved on this device. Use "Write them out" when you are back online.');
-        } else {
-          onText(result.text);
-        }
+        transcribeOrQueue(uri)
+          .then((result) => {
+            if (result.queued) {
+              setNotice('No internet. Saved on this device. Use "Write them out" when you are back online.');
+            } else if (result.text) {
+              onText(result.text);
+            }
+          })
+          .catch((err) => {
+            console.error('Transcription error:', err);
+            setError(err instanceof Error ? err.message : 'Transcription failed.');
+          })
+          .finally(() => {
+            setBusy(false);
+          });
         return;
       }
 
@@ -69,7 +109,6 @@ export function VoiceButton({ onText, disabled, label = 'Speak' }: VoiceButtonPr
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : 'Voice failed. Try again.');
-    } finally {
       setBusy(false);
     }
   }, [onText, recorder, recording]);
@@ -98,7 +137,7 @@ export function VoiceButton({ onText, disabled, label = 'Speak' }: VoiceButtonPr
           />
         )}
         <ThemedText variant="label" tone={recording ? 'loss' : 'text'}>
-          {busy ? 'Writing it down…' : recording ? 'Tap to stop' : label}
+          {busy ? 'Transcribing…' : recording ? 'Tap to stop' : label}
         </ThemedText>
       </Pressable>
       {notice ? (

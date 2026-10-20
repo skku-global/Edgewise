@@ -6,6 +6,17 @@ import { colors, ease, native } from './theme';
 
 export type Item = { label: string; value: number };
 
+export type CoverageData = {
+  totalTrades: number;
+  withMood: number;
+  moodCoveragePct: number;
+  fullCoverage: number;
+  partialCoverage: number;
+  missingCoverage: number;
+  shotCoveragePct: number;
+  totalShots: number;
+};
+
 export type ReportsProps = {
   net?: number;
   winRate?: number; // 0-100
@@ -14,6 +25,7 @@ export type ReportsProps = {
   bySetup?: Item[];
   byMood?: Item[];
   byMethod?: Item[];
+  coverage?: CoverageData;
   insight?: string;
   onTalk?: () => void;
   onRangeChange?: (range: string) => void;
@@ -65,7 +77,7 @@ function Rows({ title, items }: { title: string; items: Item[] }) {
 }
 
 export default function ReportsScreen({ net, winRate, profitFactor, growth = [], bySetup = [], byMood = [],
-  byMethod = [], insight, onTalk, onRangeChange }: ReportsProps) {
+  byMethod = [], coverage, insight, onTalk, onRangeChange }: ReportsProps) {
   const { width } = useWindowDimensions();
   const big = width < 600 ? 44 : 60;
   const [range, setRange] = useState('30 days');
@@ -121,6 +133,49 @@ export default function ReportsScreen({ net, winRate, profitFactor, growth = [],
         <Rows title="By mood" items={byMood} />
         <Rows title="How you log" items={byMethod} />
       </Rise>
+
+      {coverage && coverage.totalTrades > 0 ? (
+        <Rise delay={500} style={{ marginTop: 20 }}>
+          <View style={{ padding: 24, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }}>
+            <Text style={{ fontSize: 15, fontWeight: '600', color: colors.muted, marginBottom: 16 }}>
+              Discipline & Coverage
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 24 }}>
+              {/* Mood Coverage */}
+              <View style={{ flexGrow: 1, flexBasis: 280 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <Text style={{ fontSize: 16, fontWeight: '600', color: colors.ink }}>Mood Coverage</Text>
+                  <Text style={{ fontSize: 20, fontWeight: '700', color: colors.green }}>
+                    {coverage.moodCoveragePct}%
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 14, color: colors.muted, marginTop: 4 }}>
+                  {coverage.withMood} of {coverage.totalTrades} trades logged with emotional state
+                </Text>
+                <View style={{ height: 8, borderRadius: 4, backgroundColor: colors.skeleton, marginTop: 10, overflow: 'hidden' }}>
+                  <View style={{ height: 8, borderRadius: 4, backgroundColor: colors.green, width: `${coverage.moodCoveragePct}%` }} />
+                </View>
+              </View>
+
+              {/* Screenshot Coverage */}
+              <View style={{ flexGrow: 1, flexBasis: 280 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <Text style={{ fontSize: 16, fontWeight: '600', color: colors.ink }}>Screenshot Coverage</Text>
+                  <Text style={{ fontSize: 20, fontWeight: '700', color: coverage.shotCoveragePct >= 80 ? colors.green : colors.mint }}>
+                    {coverage.shotCoveragePct}%
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 14, color: colors.muted, marginTop: 4 }}>
+                  {coverage.fullCoverage} full (≥2 shots) • {coverage.partialCoverage} partial (1) • {coverage.missingCoverage} none
+                </Text>
+                <View style={{ height: 8, borderRadius: 4, backgroundColor: colors.skeleton, marginTop: 10, overflow: 'hidden' }}>
+                  <View style={{ height: 8, borderRadius: 4, backgroundColor: colors.mint, width: `${coverage.shotCoveragePct}%` }} />
+                </View>
+              </View>
+            </View>
+          </View>
+        </Rise>
+      ) : null}
 
       {insight ? (
         <Rise delay={600} style={{ marginTop: 20 }}>

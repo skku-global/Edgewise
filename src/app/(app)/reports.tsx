@@ -57,6 +57,27 @@ export default function Reports() {
       if (worst && worst.value < 0) insight += ` Trades tagged "${worst.label}" cost you the most.`;
     }
 
+    const totalTrades = scoped.length;
+    const withMood = scoped.filter((t) => t.moods && t.moods.length > 0).length;
+    const moodCoveragePct = totalTrades > 0 ? Math.round((withMood / totalTrades) * 100) : 0;
+
+    const fullCoverage = scoped.filter((t) => (t.shot_count ?? (t.shots?.length ?? 0)) >= 2).length;
+    const partialCoverage = scoped.filter((t) => (t.shot_count ?? (t.shots?.length ?? 0)) === 1).length;
+    const missingCoverage = scoped.filter((t) => (t.shot_count ?? (t.shots?.length ?? 0)) === 0).length;
+    const shotCoveragePct = totalTrades > 0 ? Math.round((fullCoverage / totalTrades) * 100) : 0;
+    const totalShots = scoped.reduce((sum, t) => sum + (t.shot_count ?? (t.shots?.length ?? 0)), 0);
+
+    const coverage = {
+      totalTrades,
+      withMood,
+      moodCoveragePct,
+      fullCoverage,
+      partialCoverage,
+      missingCoverage,
+      shotCoveragePct,
+      totalShots,
+    };
+
     return {
       net: stats.trades ? stats.netPl : undefined,
       winRate: stats.trades ? stats.winRate : undefined,
@@ -65,6 +86,7 @@ export default function Reports() {
       bySetup,
       byMood,
       byMethod,
+      coverage,
       insight,
     };
   }, [trades, range]);

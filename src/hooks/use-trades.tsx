@@ -47,7 +47,9 @@ import {
 } from 'react';
 import { AppState } from 'react-native';
 
+import { normalize, type JournalEntry } from '@/lib/journal';
 import { describeLoadError } from '@/lib/load-errors';
+import type { EntryShot } from '@/lib/shots';
 import { supabase } from '@/lib/supabase';
 import { effectiveProfitLoss, hasStoredProfitLoss } from '@/lib/trade-math';
 import { FULL_TRADE_COLUMNS, type TradeRow } from '@/lib/trade-table';
@@ -172,26 +174,35 @@ export function TradesProvider({ children }: PropsWithChildren) {
 
       const rows = (tradeData as RawTrade[]) ?? [];
 
-      // Moods live in their own table keyed by trade_id, and one trade can
-      // carry several. Fetch them for every trade rather than the visible
-      // page: the mood insight analyses the whole history.
       const moodsByTrade = new Map<number, string[]>();
       const motionByTrade = new Map<number, string>();
+      const entriesByTrade = new Map<number, JournalEntry>();
+      const shotsByTrade = new Map<number, EntryShot[]>();
 
       if (rows.length > 0) {
-        const { data: moodData, error: moodError } = await supabase
-          .from('moods')
-          .select('trade_id, mood_tag, motion_flag')
-          .in(
-            'trade_id',
-            rows.map((row) => row.id),
-          );
+        const tradeIds = rows.map((row) => row.id);
 
-        if (moodError) {
-          throw moodError;
+        const [moodRes, entryRes, shotRes] = await Promise.all([
+          supabase
+            .from('moods')
+            .select('trade_id, mood_tag, motion_flag')
+            .in('trade_id', tradeIds),
+          supabase
+            .from('journal_entries')
+            .select('*')
+            .in('trade_id', tradeIds),
+          supabase
+            .from('entry_shots')
+            .select('id, entry_id, trade_id, phase, path, bytes, ai_read, content_hash, created_at')
+            .in('trade_id', tradeIds)
+            .order('created_at', { ascending: true }),
+        ]);
+
+        if (moodRes.error) {
+          throw moodRes.error;
         }
 
-        for (const mood of (moodData as RawMood[]) ?? []) {
+        for (const mood of (moodRes.data as RawMood[]) ?? []) {
           if (mood.mood_tag) {
             const existing = moodsByTrade.get(mood.trade_id) ?? [];
             existing.push(mood.mood_tag);
@@ -203,20 +214,45 @@ export function TradesProvider({ children }: PropsWithChildren) {
             motionByTrade.set(mood.trade_id, mood.motion_flag);
           }
         }
+
+        if (entryRes.data) {
+          for (const raw of entryRes.data) {
+            const entry = normalize(raw as Record<string, unknown>);
+            if (entry.trade_id) {
+              entriesByTrade.set(entry.trade_id, entry);
+            }
+          }
+        }
+
+        if (shotRes.data) {
+          for (const shot of shotRes.data as EntryShot[]) {
+            if (shot.trade_id) {
+              const list = shotsByTrade.get(shot.trade_id) ?? [];
+              list.push(shot);
+              shotsByTrade.set(shot.trade_id, list);
+            }
+          }
+        }
       }
 
       setTrades(
-        rows.map((row) => ({
-          ...row,
-          // Rows written before the broker-sync migration have no source at
-          // all; they were all typed into the Add Trade form, so treat a
-          // missing value as manual rather than showing them as synced.
-          source: row.source ?? 'manual',
-          pl: effectiveProfitLoss(row),
-          derived: !hasStoredProfitLoss(row),
-          moods: moodsByTrade.get(row.id) ?? [],
-          motion_flag: motionByTrade.get(row.id) ?? null,
-        })),
+        rows.map((row) => {
+          const shots = shotsByTrade.get(row.id) ?? [];
+          return {
+            ...row,
+            // Rows written before the broker-sync migration have no source at
+            // all; they were all typed into the Add Trade form, so treat a
+            // missing value as manual rather than showing them as synced.
+            source: row.source ?? 'manual',
+            pl: effectiveProfitLoss(row),
+            derived: !hasStoredProfitLoss(row),
+            moods: moodsByTrade.get(row.id) ?? [],
+            motion_flag: motionByTrade.get(row.id) ?? null,
+            journal_entry: entriesByTrade.get(row.id) ?? null,
+            shots,
+            shot_count: shots.length,
+          };
+        }),
       );
     } catch (err) {
       console.error(err);
@@ -284,6 +320,8 @@ export function TradesProvider({ children }: PropsWithChildren) {
       .channel(`${CHANNEL_PREFIX}${channelCounter}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trades' }, scheduleReload)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'moods' }, scheduleReload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'entry_shots' }, scheduleReload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'journal_entries' }, scheduleReload)
       .subscribe((status) => {
         setLive(status === 'SUBSCRIBED');
       });

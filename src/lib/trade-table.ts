@@ -3,7 +3,9 @@
  * so the table's behaviour is testable without a network round trip.
  */
 
+import type { JournalEntry } from './journal';
 import { normalizeSetup } from './setup-types';
+import type { EntryShot } from './shots';
 
 export type TradeRow = {
   id: number;
@@ -41,6 +43,11 @@ export type TradeRow = {
   pl: number;
   moods: string[];
   motion_flag: string | null;
+  /** Linked journal entry (plan / checkins / review) */
+  journal_entry?: JournalEntry | null;
+  /** Attached screenshots (up to 5) */
+  shots?: EntryShot[];
+  shot_count?: number;
 };
 
 export type SortKey = 'date' | 'pl';

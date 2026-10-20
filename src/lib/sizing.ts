@@ -28,6 +28,48 @@ const EMPTY: SizingSettings = { riskAmount: null, pointValues: {} };
 
 export async function loadSizing(): Promise<SizingSettings> {
   try {
+    const { data: authData } = await supabase.auth.getUser();
+    const userId = authData?.user?.id;
+    if (userId) {
+      const { data, error } = await supabase
+        .from('user_settings')
+        .select('default_lot, value_per_lot')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (!error && data && (data.default_lot !== null || data.value_per_lot !== null)) {
+        const loaded: SizingSettings = {
+          riskAmount: data.default_lot !== null ? Number(data.default_lot) : null,
+          pointValues: (data.value_per_lot as Record<string, number>) ?? {},
+        };
+        AsyncStorage.setItem(KEY, JSON.stringify(loaded)).catch(() => {});
+        return loaded;
+      }
+
+      // One-time copy from AsyncStorage if user_settings is empty
+      const raw = await AsyncStorage.getItem(KEY);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as Partial<SizingSettings>;
+          const migrated: SizingSettings = {
+            riskAmount: typeof parsed.riskAmount === 'number' ? parsed.riskAmount : null,
+            pointValues: parsed.pointValues && typeof parsed.pointValues === 'object' ? parsed.pointValues : {},
+          };
+          await supabase.from('user_settings').upsert({
+            user_id: userId,
+            default_lot: migrated.riskAmount,
+            value_per_lot: migrated.pointValues,
+            updated_at: new Date().toISOString(),
+          });
+          return migrated;
+        } catch {}
+      }
+    }
+  } catch (err) {
+    console.error('loadSizing error:', err);
+  }
+
+  try {
     const raw = await AsyncStorage.getItem(KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<SizingSettings>;
@@ -45,8 +87,18 @@ export async function loadSizing(): Promise<SizingSettings> {
 export async function saveSizing(settings: SizingSettings): Promise<void> {
   try {
     await AsyncStorage.setItem(KEY, JSON.stringify(settings));
+    const { data: authData } = await supabase.auth.getUser();
+    const userId = authData?.user?.id;
+    if (userId) {
+      await supabase.from('user_settings').upsert({
+        user_id: userId,
+        default_lot: settings.riskAmount,
+        value_per_lot: settings.pointValues,
+        updated_at: new Date().toISOString(),
+      });
+    }
   } catch (err) {
-    console.error(err);
+    console.error('saveSizing error:', err);
   }
 }
 
