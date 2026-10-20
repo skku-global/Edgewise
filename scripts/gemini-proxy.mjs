@@ -154,7 +154,34 @@ async function callFallback(g) {
   return res;
 }
 
+// Fallback model, used when the main one is overloaded. Set GEMINI_FALLBACK_MODEL to enable.
+const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL;
+function urlFor(model) {
+  return "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent";
+}
+
 async function callGemini(geminiBody) {
+  const started = Date.now();
+  const BUDGET_MS = 50000; // stay under Vercel's 60 s limit
+  const models = [MODEL, ...(FALLBACK_MODEL && FALLBACK_MODEL !== MODEL ? [FALLBACK_MODEL] : [])];
+  let result = { status: 503, ok: false, data: { error: { message: "Gemini is busy. Try again in a minute." } } };
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const left = BUDGET_MS - (Date.now() - started);
+    if (left < 4000) break;
+    const model = models[attempt % models.length];
+    try {
+      result = await callGeminiOnce(geminiBody, model, Math.min(25000, left));
+    } catch (err) {
+      result = { status: 504, ok: false, data: { error: { message: "Gemini took too long to answer. Try again." } } };
+    }
+    if (![500, 502, 503, 504].includes(result.status)) return result;
+    console.log("Gemini busy (" + result.status + ") on " + model + ", try " + (attempt + 1));
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return result;
+}
+
+async function callGeminiOnce(geminiBody, model, timeoutMs) {
   if (API_KEY) {
     try {
       const first = await callGeminiOnly(geminiBody);
@@ -170,7 +197,8 @@ async function callGemini(geminiBody) {
 }
 
 async function callGeminiOnly(geminiBody) {
-  const upstream = await fetch(UPSTREAM, {
+  const upstream = await fetch(urlFor(model), {
+    signal: AbortSignal.timeout(timeoutMs),
     // API STEP 2 - METHOD: POST, because we are sending data.
     method: "POST",
     // API STEP 3 - HEADERS: data format + your secret key.
@@ -183,7 +211,7 @@ async function callGeminiOnly(geminiBody) {
   });
 
   // API STEP 5 - RESPONSE: read the status code first, then the data.
-  const data = await upstream.json();
+  const data = await upstream.json().catch(() => ({ error: { message: "Gemini returned an error page (status " + upstream.status + ")" } }));
   console.log(`${upstream.status} ${upstream.statusText}`);
   return { status: upstream.status, ok: upstream.ok, data };
 }
