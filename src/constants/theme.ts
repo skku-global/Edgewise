@@ -410,4 +410,4 @@ export const MaxContentWidth = 800;
  * height rather than being styled to match, so the two cannot drift into either
  * a gap or a clipped heading.
  */
-export const WebTopNavInset = Platform.select({ web: 72, default: 0 }) ?? 0;
+export const WebTopNavInset = Platform.select({ web: 60, default: 0 }) ?? 0;

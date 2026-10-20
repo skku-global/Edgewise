@@ -127,6 +127,8 @@ export function JournalSheet({
 
   // Screenshots
   const [shots, setShots] = useState<EntryShot[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [loadingShots, setLoadingShots] = useState(false);
   const [uploadingShot, setUploadingShot] = useState(false);
 
   // Status & errors
