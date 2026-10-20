@@ -148,6 +148,7 @@ export function HistoryImportSheet({ visible, onClose, onSaved }: HistoryImportS
             size: trade.size!,
           }),
         setup_type: null,
+        log_method: 'history',
         notes: trade.closed_at ? `Imported from a history screenshot (${trade.closed_at})` : 'Imported from a history screenshot',
       }));
       const { error: insertError } = await supabase.from('trades').insert(payload);

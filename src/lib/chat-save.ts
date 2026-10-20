@@ -215,6 +215,7 @@ export async function saveChatEntry(entry: ChatEntry): Promise<string> {
         profit_loss: pl,
         setup_type: null,
         notes,
+        log_method: 'chat',
       },
     ]);
     if (error) throw error;
@@ -256,6 +257,7 @@ export async function saveChatEntry(entry: ChatEntry): Promise<string> {
     const { error } = await supabase.from('journal_entries').insert([
       {
         ...plan,
+        log_method: 'chat',
         grade,
         rules_result: results,
         flags,
@@ -276,6 +278,7 @@ export async function saveChatEntry(entry: ChatEntry): Promise<string> {
       const { error } = await supabase.from('journal_entries').insert([
         {
           pair: entry.pair,
+          log_method: 'chat',
           direction: entry.direction,
           planned_entry: entry.entry_price,
           stop_loss: entry.stop_loss,

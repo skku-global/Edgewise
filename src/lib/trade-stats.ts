@@ -27,6 +27,8 @@ export type StatsTrade = {
   pair: string;
   direction: 'buy' | 'sell';
   setup_type: string | null;
+  log_method?: string | null;
+  source?: string | null;
   created_at: string;
   pl: number;
   moods: string[];

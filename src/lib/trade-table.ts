@@ -15,6 +15,7 @@ export type TradeRow = {
   setup_type: string | null;
   notes: string | null;
   profit_loss: number | null;
+  log_method?: string | null;
   created_at: string;
   /** Where the row came from: 'manual' (Add Trade form) or 'mt5' (auto-sync). */
   source: 'manual' | 'mt5' | 'ctrader' | 'tradelocker' | string;
@@ -60,7 +61,7 @@ export type SortKey = 'date' | 'pl';
  * extras. Adding a column to the base now reaches both.
  */
 export const BASE_TRADE_COLUMNS =
-  'id, pair, direction, entry_price, exit_price, size, setup_type, notes, profit_loss, created_at';
+  'id, pair, direction, entry_price, exit_price, size, setup_type, notes, profit_loss, created_at, log_method';
 
 /** Provenance, real broker timestamps and costs — added by scripts/add-broker-sync.sql. */
 export const SYNC_TRADE_COLUMNS =

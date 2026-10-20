@@ -418,6 +418,7 @@ export async function insertEntry(
     .insert([
       {
         ...plan,
+        log_method: 'plan',
         pair: plan.pair.trim().toUpperCase(),
         grade: graded.grade,
         rules_result: graded.results,
@@ -441,6 +442,7 @@ export async function updateEntry(
     .from('journal_entries')
     .update(patch)
     .eq('id', id)
+    .neq('status', 'closed') // a closed trade can never be edited
     .select()
     .single();
   if (error) {

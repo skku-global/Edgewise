@@ -165,6 +165,7 @@ export function AddTradeSheet({ visible, onClose, onSaved }: AddTradeSheetProps)
             profit_loss: pl,
             setup_type: form.setup_type,
             notes: form.notes.trim() || null,
+            log_method: 'hand',
           },
         ])
         .select('id');

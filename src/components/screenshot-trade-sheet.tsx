@@ -186,6 +186,7 @@ export function ScreenshotTradeSheet({ visible, onClose, onSaved }: ScreenshotTr
             take_profit: form.take_profit.trim() ? Number(form.take_profit) : null,
             setup_type: form.setup_type,
             notes: form.notes.trim() || null,
+            log_method: 'screenshot',
           },
         ])
         .select('id');

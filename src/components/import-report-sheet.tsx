@@ -273,7 +273,7 @@ export function ImportReportSheet({
         // stale, or a second device importing at the same moment.
         const { error: writeError } = await supabase
           .from('trades')
-          .upsert(chunk, { onConflict: 'user_id,source,external_id', ignoreDuplicates: true });
+          .upsert(chunk.map((row) => ({ ...row, log_method: 'report' })), { onConflict: 'user_id,source,external_id', ignoreDuplicates: true });
 
         if (writeError) {
           throw writeError;
