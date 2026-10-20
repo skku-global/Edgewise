@@ -100,6 +100,18 @@ async function readBody(req, limit) {
  * Returns { status, ok, data }.
  */
 async function callGemini(geminiBody) {
+  // Gemini sometimes answers 503 "overloaded". Wait a moment and try again (up to 3 tries).
+  let result;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    result = await callGeminiOnce(geminiBody);
+    if (![500, 502, 503, 504].includes(result.status)) return result;
+    console.log(`Gemini busy (${result.status}), retry ${attempt + 1} of 2...`);
+    if (attempt < 2) await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+  }
+  return result;
+}
+
+async function callGeminiOnce(geminiBody) {
   const upstream = await fetch(UPSTREAM, {
     // API STEP 2 - METHOD: POST, because we are sending data.
     method: "POST",
@@ -113,7 +125,7 @@ async function callGemini(geminiBody) {
   });
 
   // API STEP 5 - RESPONSE: read the status code first, then the data.
-  const data = await upstream.json();
+  const data = await upstream.json().catch(() => ({ error: { message: "Gemini returned an error page (status " + upstream.status + ")" } }));
   console.log(`${upstream.status} ${upstream.statusText}`);
   return { status: upstream.status, ok: upstream.ok, data };
 }
