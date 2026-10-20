@@ -1,0 +1,1257 @@
+
+===== src/lib/journal.ts =====
+/**
+ * Trade journal logic: rules, flags, grading, check-ins, reviews, screenshots.
+ *
+ * Every AI call goes through your own proxy (scripts/gemini-proxy.mjs), so the
+ * key never reaches the app. The 5 API steps for each call:
+ *   1 endpoint (proxy + route)  2 method (POST)  3 headers (content-type)
+ *   4 body (JSON, or raw image bytes)  5 response (status code, then data)
+ *
+ * What is deliberately NOT left to the AI:
+ *   - the grade: counted from how many of YOUR rules were met
+ *   - the warnings: lot size, missing stop, bad risk:reward are plain arithmetic
+ * The AI only judges "do the written reasons show this rule?" and writes words.
+ */
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { supabase } from '@/lib/supabase';
+
+export type Direction = 'buy' | 'sell';
+export type EntryStatus = 'planned' | 'open' | 'closed';
+
+export type RuleResult = { rule: string; met: boolean; evidence: string };
+export type Checkin = { at: string; text: string; reply?: string };
+
+export type JournalEntry = {
+  id: number;
+  created_at: string;
+  status: EntryStatus;
+  pair: string;
+  direction: Direction;
+  planned_entry: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  size: number | null;
+  reasons: string;
+  feelings_before: string;
+  grade: string | null;
+  rules_result: RuleResult[];
+  flags: string[];
+  ai_summary: string | null;
+  checkins: Checkin[];
+  result_pl: number | null;
+  feelings_after: string | null;
+  review: string | null;
+  closed_at: string | null;
+};
+
+export type PlanInput = {
+  pair: string;
+  direction: Direction;
+  planned_entry: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  size: number | null;
+  reasons: string;
+  feelings_before: string;
+};
+
+/* ------------------------------------------------------------------ */
+/* Rules (stored on the phone)                                         */
+/* ------------------------------------------------------------------ */
+
+const RULES_KEY = 'edgewise.rules.v1';
+
+export const DEFAULT_RULES = [
+  'The trade is in the direction of the higher-timeframe trend',
+  'Entry is at a clear level or zone (support, resistance, order block)',
+  'There was a confirmation before entry',
+  'The stop loss is at a logical level, not squeezed tight',
+  'Risk to reward is at least 1 to 2',
+  'The lot size follows my normal risk',
+];
+
+export function parseRules(text: string): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.replace(/^[-*\d.)\s]+/, '').trim())
+    .filter(Boolean);
+}
+
+export async function loadRules(): Promise<string[]> {
+  try {
+    const raw = await AsyncStorage.getItem(RULES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed) && parsed.every((r) => typeof r === 'string') && parsed.length > 0) {
+        return parsed as string[];
+      }
+    }
+  } catch (err) {
+    console.error(err);
+  }
+  return DEFAULT_RULES;
+}
+
+export async function saveRules(rules: string[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(RULES_KEY, JSON.stringify(rules));
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Plain-arithmetic checks                                             */
+/* ------------------------------------------------------------------ */
+
+/** Median lot size of your last 30 trades, or null when there is too little history. */
+export async function usualLotSize(): Promise<number | null> {
+  const { data, error } = await supabase
+    .from('trades')
+    .select('size')
+    .order('created_at', { ascending: false })
+    .limit(30);
+  if (error || !data) {
+    return null;
+  }
+  const sizes = (data as { size: unknown }[])
+    .map((row) => Number(row.size))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+  if (sizes.length < 5) {
+    return null;
+  }
+  const mid = Math.floor(sizes.length / 2);
+  return sizes.length % 2 ? sizes[mid] : (sizes[mid - 1] + sizes[mid]) / 2;
+}
+
+export function computeFlags(
+  plan: PlanInput,
+  usual: number | null,
+  /** Your fixed risk and what 1.00 of price move is worth per lot, when known. */
+  riskCheck?: { riskAmount: number; valuePerUnit: number },
+): string[] {
+  const flags: string[] = [];
+
+  if (plan.stop_loss === null) {
+    flags.push('No stop loss set');
+  }
+
+  if (riskCheck && plan.planned_entry !== null && plan.stop_loss !== null && plan.size) {
+    const loss = plan.size * Math.abs(plan.planned_entry - plan.stop_loss) * riskCheck.valuePerUnit;
+    if (loss > riskCheck.riskAmount * 1.25) {
+      flags.push(
+        `This lot size would lose about $${loss.toFixed(2)} at your stop, above your fixed $${riskCheck.riskAmount}`,
+      );
+    }
+  }
+
+  if (usual && plan.size && plan.size > usual * 2) {
+    flags.push(
+      `Lot size ${plan.size} is ${(plan.size / usual).toFixed(1)}x your usual ${usual}`,
+    );
+  }
+
+  const { planned_entry: entry, stop_loss: stop, take_profit: target, direction } = plan;
+  if (entry !== null && stop !== null) {
+    const wrongSide = direction === 'buy' ? stop >= entry : stop <= entry;
+    if (wrongSide) {
+      flags.push('The stop loss is on the wrong side of the entry');
+    } else if (target !== null) {
+      const risk = Math.abs(entry - stop);
+      const reward = Math.abs(target - entry);
+      if (risk > 0 && reward / risk < 1) {
+        flags.push(`Risk to reward is only 1 to ${(reward / risk).toFixed(1)}`);
+      }
+    }
+  }
+
+  return flags;
+}
+
+const GRADE_ORDER = ['D', 'C', 'C+', 'B', 'B+', 'A', 'A+'];
+
+/** A+ = every rule met. Counted, so the same answers always give the same grade. */
+export function gradeFromResults(results: RuleResult[]): string {
+  if (results.length === 0) {
+    return 'D';
+  }
+  const share = results.filter((r) => r.met).length / results.length;
+  if (share >= 0.9) return 'A+';
+  if (share >= 0.75) return 'A';
+  if (share >= 0.6) return 'B+';
+  if (share >= 0.45) return 'B';
+  if (share >= 0.3) return 'C+';
+  if (share > 0) return 'C';
+  return 'D';
+}
+
+/** Any warning flag caps the grade at C+, whatever the reasons said. */
+export function capGrade(grade: string, flags: string[]): string {
+  if (flags.length === 0) {
+    return grade;
+  }
+  return GRADE_ORDER.indexOf(grade) > GRADE_ORDER.indexOf('C+') ? 'C+' : grade;
+}
+
+/* ------------------------------------------------------------------ */
+/* Talking to the proxy                                                */
+/* ------------------------------------------------------------------ */
+
+function proxyBase(): string {
+  const base = (process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL ?? '').trim().replace(/\/+$/, '');
+  if (!base) {
+    throw new Error('The AI proxy is not set. Set EXPO_PUBLIC_CLAUDE_PROXY_URL and restart the app.');
+  }
+  return base;
+}
+
+function errorMessage(raw: string): string | null {
+  try {
+    return (JSON.parse(raw) as { error?: { message?: string } }).error?.message ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** One question in, plain text out. */
+async function askModel(system: string, prompt: string, maxTokens = 4000): Promise<string> {
+  // STEP 1-4: endpoint, method, headers, body
+  const response = await fetch(proxyBase() + '/v1/messages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      system,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: maxTokens,
+    }),
+  });
+
+  // STEP 5: status code first. 404 = wrong model name, 429 = free limit, 502 = proxy down.
+  const raw = await response.text();
+  if (!response.ok) {
+    throw new Error(errorMessage(raw) ?? `AI error ${response.status}`);
+  }
+  const data = JSON.parse(raw) as { content?: { type: string; text?: string }[] };
+  return (data.content ?? [])
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text ?? '')
+    .join('')
+    .trim();
+}
+
+function parseJson<T>(text: string): T {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error('The AI did not return a usable answer. Try again.');
+  }
+  return JSON.parse(text.slice(start, end + 1)) as T;
+}
+
+function describePlan(plan: PlanInput): string {
+  const show = (v: number | null) => (v === null ? 'not set' : String(v));
+  return [
+    `Pair: ${plan.pair}`,
+    `Direction: ${plan.direction}`,
+    `Planned entry: ${show(plan.planned_entry)}`,
+    `Stop loss: ${show(plan.stop_loss)}`,
+    `Take profit: ${show(plan.take_profit)}`,
+    `Lot size: ${show(plan.size)}`,
+    `Reasons they wrote: ${plan.reasons || '(none)'}`,
+    `How they feel before the trade: ${plan.feelings_before || '(not said)'}`,
+  ].join('\n');
+}
+
+/* ------------------------------------------------------------------ */
+/* Grading                                                             */
+/* ------------------------------------------------------------------ */
+
+export type GradeOutcome = {
+  grade: string;
+  results: RuleResult[];
+  summary: string;
+};
+
+export async function gradePlan(
+  plan: PlanInput,
+  rules: string[],
+  flags: string[],
+): Promise<GradeOutcome> {
+  const system =
+    "You check a trader's written reasons against THEIR OWN rules. For each rule, decide if the " +
+    'written reasons clearly show it was met. Vague claims ("looks good", "feels right") do not ' +
+    'count. Give a short quote as evidence, or say what is missing. Do not judge whether the trade ' +
+    'will win and never tell them to take or skip it. Return ONLY JSON in this shape: ' +
+    '{"results":[{"rule":string,"met":boolean,"evidence":string}],"summary":string}. ' +
+    'Keep one result per rule, in the same order. summary is two plain sentences.';
+
+  const prompt =
+    `${describePlan(plan)}\n\nTheir rules:\n` +
+    rules.map((rule, index) => `${index + 1}. ${rule}`).join('\n') +
+    (flags.length ? `\n\nWarnings already found by arithmetic:\n- ${flags.join('\n- ')}` : '');
+
+  const parsed = parseJson<{ results?: RuleResult[]; summary?: string }>(
+    await askModel(system, prompt),
+  );
+
+  // Line the answers up with the rules, so a missing or reordered item cannot
+  // quietly turn into a pass.
+  const results: RuleResult[] = rules.map((rule, index) => {
+    const found =
+      parsed.results?.find((r) => r.rule?.trim() === rule.trim()) ?? parsed.results?.[index];
+    return {
+      rule,
+      met: found?.met === true,
+      evidence: String(found?.evidence ?? 'Not mentioned'),
+    };
+  });
+
+  return {
+    grade: capGrade(gradeFromResults(results), flags),
+    results,
+    summary: parsed.summary?.trim() || '',
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* During and after the trade                                          */
+/* ------------------------------------------------------------------ */
+
+function entryAsPlan(entry: JournalEntry): PlanInput {
+  return {
+    pair: entry.pair,
+    direction: entry.direction,
+    planned_entry: entry.planned_entry,
+    stop_loss: entry.stop_loss,
+    take_profit: entry.take_profit,
+    size: entry.size,
+    reasons: entry.reasons,
+    feelings_before: entry.feelings_before,
+  };
+}
+
+/** Mid-trade: reflects the written plan back. Never says hold, close or move. */
+export async function coachCheckin(entry: JournalEntry, text: string): Promise<string> {
+  const system =
+    "You are the trader's journal coach. You can see the plan they wrote BEFORE the trade. " +
+    'Never tell them to enter, hold, close, add, or move a stop, and never predict price. Do this: ' +
+    '(1) restate their planned stop, target and main reasons in one or two lines; ' +
+    '(2) say whether what they describe now sounds like the invalidation they planned or like a ' +
+    'feeling such as fear or doubt; (3) ask one short question. Under 90 words, plain language.';
+
+  const earlier = entry.checkins.length
+    ? '\n\nEarlier check-ins:\n' + entry.checkins.map((c) => `- ${c.text}`).join('\n')
+    : '';
+
+  return askModel(
+    system,
+    `The plan:\n${describePlan(entryAsPlan(entry))}\nGrade at the time: ${entry.grade ?? 'none'}` +
+      `${earlier}\n\nRight now they say: ${text}`,
+    1500,
+  );
+}
+
+/** After the trade: plan versus what happened, using only what they wrote. */
+export async function reviewTrade(
+  entry: JournalEntry,
+  resultPl: number | null,
+  feelingsAfter: string,
+): Promise<string> {
+  const system =
+    'You review a finished trade for the trader. Compare the written plan with what they say ' +
+    'happened. Say what followed the plan and what did not (for example exiting early, moving a ' +
+    'stop, a different lot size), using only what they wrote. Name one thing worth watching if it ' +
+    'repeats across trades, as a possibility, not a fact. No trading signals. Under 120 words.';
+
+  const checkins = entry.checkins.length
+    ? '\n\nCheck-ins during the trade:\n' + entry.checkins.map((c) => `- ${c.text}`).join('\n')
+    : '';
+
+  return askModel(
+    system,
+    `The plan:\n${describePlan(entryAsPlan(entry))}${checkins}\n\n` +
+      `Result: ${resultPl === null ? 'not given' : resultPl}\nWhat they say about it: ${feelingsAfter || '(nothing)'}`,
+    1500,
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Storage                                                             */
+/* ------------------------------------------------------------------ */
+
+const num = (value: unknown): number | null =>
+  value === null || value === undefined || value === '' ? null : Number(value);
+
+function normalize(row: Record<string, unknown>): JournalEntry {
+  return {
+    id: Number(row.id),
+    created_at: String(row.created_at),
+    status: row.status as EntryStatus,
+    pair: String(row.pair),
+    direction: row.direction as Direction,
+    planned_entry: num(row.planned_entry),
+    stop_loss: num(row.stop_loss),
+    take_profit: num(row.take_profit),
+    size: num(row.size),
+    reasons: String(row.reasons ?? ''),
+    feelings_before: String(row.feelings_before ?? ''),
+    grade: (row.grade as string | null) ?? null,
+    rules_result: (row.rules_result as RuleResult[]) ?? [],
+    flags: (row.flags as string[]) ?? [],
+    ai_summary: (row.ai_summary as string | null) ?? null,
+    checkins: (row.checkins as Checkin[]) ?? [],
+    result_pl: num(row.result_pl),
+    feelings_after: (row.feelings_after as string | null) ?? null,
+    review: (row.review as string | null) ?? null,
+    closed_at: (row.closed_at as string | null) ?? null,
+  };
+}
+
+export async function insertEntry(
+  plan: PlanInput,
+  graded: { grade: string; results: RuleResult[]; flags: string[]; summary: string },
+): Promise<JournalEntry> {
+  const { data, error } = await supabase
+    .from('journal_entries')
+    .insert([
+      {
+        ...plan,
+        log_method: 'plan',
+        pair: plan.pair.trim().toUpperCase(),
+        grade: graded.grade,
+        rules_result: graded.results,
+        flags: graded.flags,
+        ai_summary: graded.summary,
+      },
+    ])
+    .select()
+    .single();
+  if (error) {
+    throw error;
+  }
+  return normalize(data as Record<string, unknown>);
+}
+
+export async function updateEntry(
+  id: number,
+  patch: Record<string, unknown>,
+): Promise<JournalEntry> {
+  const { data, error } = await supabase
+    .from('journal_entries')
+    .update(patch)
+    .eq('id', id)
+    .neq('status', 'closed') // a closed trade can never be edited
+    .select()
+    .single();
+  if (error) {
+    throw error;
+  }
+  return normalize(data as Record<string, unknown>);
+}
+
+/** Plans and open trades, newest first. */
+export async function listOpenEntries(): Promise<JournalEntry[]> {
+  const { data, error } = await supabase
+    .from('journal_entries')
+    .select('*')
+    .neq('status', 'closed')
+    .order('created_at', { ascending: false })
+    .limit(20);
+  if (error) {
+    throw error;
+  }
+  return (data as Record<string, unknown>[]).map(normalize);
+}
+
+/* ------------------------------------------------------------------ */
+/* Screenshot -> trade numbers                                         */
+/* ------------------------------------------------------------------ */
+
+export type ExtractedTrade = {
+  pair: string | null;
+  direction: Direction | null;
+  entry_price: number | null;
+  exit_price: number | null;
+  size: number | null;
+  profit_loss: number | null;
+  stop_loss?: number | null;
+  take_profit?: number | null;
+  notes: string | null;
+};
+
+/**
+ * Sends a screenshot to the proxy and returns the numbers the AI could read.
+ * Never saved from here: the screen shows them for you to check first.
+ */
+export async function extractTradeFromImage(uri: string, mimeHint?: string): Promise<ExtractedTrade> {
+  // Read the picked file into raw bytes.
+  const blob = await (await fetch(uri)).blob();
+  const mime =
+    mimeHint && mimeHint.startsWith('image/')
+      ? mimeHint
+      : blob.type.startsWith('image/')
+        ? blob.type
+        : 'image/jpeg';
+  if (blob.size === 0) {
+    throw new Error('That image was empty. Pick it again.');
+  }
+
+  // STEP 1-4: endpoint, method, headers (the image type), body (the bytes)
+  const response = await fetch(proxyBase() + '/v1/extract-trade', {
+    method: 'POST',
+    headers: { 'content-type': mime },
+    body: blob,
+  });
+
+  // STEP 5: 400 = unsupported image, 413 = too large, 404 = old proxy, 429 = free limit.
+  const raw = await response.text();
+  if (!response.ok) {
+    throw new Error(errorMessage(raw) ?? `Screenshot error ${response.status}`);
+  }
+  const { text } = JSON.parse(raw) as { text?: string };
+  const parsed = parseJson<Partial<ExtractedTrade>>(text ?? '');
+
+  const direction =
+    parsed.direction === 'buy' || parsed.direction === 'sell' ? parsed.direction : null;
+  return {
+    pair: parsed.pair ? String(parsed.pair).toUpperCase() : null,
+    direction,
+    entry_price: num(parsed.entry_price),
+    exit_price: num(parsed.exit_price),
+    size: num(parsed.size),
+    profit_loss: num(parsed.profit_loss),
+    stop_loss: num(parsed.stop_loss),
+    take_profit: num(parsed.take_profit),
+    notes: parsed.notes ? String(parsed.notes) : null,
+  };
+}
+
+===== src/lib/plan-vision.ts =====
+/**
+ * Read a trade plan (pair, direction, entry, stop loss, take profit, lots) from
+ * one or SEVERAL screenshots sent together.
+ *
+ * Several images go in ONE request, so the model can combine views of the same
+ * trade: the chart with your lines, the positions tab with its S/L and T/P
+ * columns, the history. The numbers come back for you to check; nothing is saved
+ * from here.
+ *
+ * The 5 API steps:
+ *   1 endpoint (proxy + /v1/extract-plan)  2 method (POST)  3 headers (JSON)
+ *   4 body ({ images: [{ mime, data }] })  5 response (status code, then { text })
+ */
+
+import * as DocumentPicker from 'expo-document-picker';
+
+import type { PickedImage } from '@/lib/coach-vision';
+
+export const MAX_IMAGES = 6;
+const MAX_TOTAL_BYTES = 12 * 1024 * 1024;
+
+export type ExtractedPlan = {
+  pair: string | null;
+  direction: 'buy' | 'sell' | null;
+  entry_price: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  size: number | null;
+  notes: string | null;
+};
+
+/** Opens the picker and allows choosing several images at once. */
+export async function pickScreenshots(): Promise<PickedImage[]> {
+  const picked = await DocumentPicker.getDocumentAsync({
+    type: 'image/*',
+    multiple: true,
+    copyToCacheDirectory: true,
+  });
+  if (picked.canceled || !picked.assets?.length) {
+    return [];
+  }
+  return picked.assets.slice(0, MAX_IMAGES).map((asset) => ({
+    uri: asset.uri,
+    mime: asset.mimeType && asset.mimeType.startsWith('image/') ? asset.mimeType : 'image/jpeg',
+    name: asset.name ?? 'screenshot',
+  }));
+}
+
+export async function readAsBase64(image: PickedImage): Promise<{ mime: string; data: string; bytes: number }> {
+  const blob = await (await fetch(image.uri)).blob();
+  if (blob.size === 0) {
+    throw new Error(`"${image.name}" was empty. Pick it again.`);
+  }
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error(`Could not read "${image.name}".`));
+    reader.readAsDataURL(blob);
+  });
+  return {
+    mime: image.mime,
+    data: dataUrl.slice(dataUrl.indexOf(',') + 1),
+    bytes: blob.size,
+  };
+}
+
+const num = (value: unknown): number | null =>
+  value === null || value === undefined || value === '' || !Number.isFinite(Number(value))
+    ? null
+    : Number(value);
+
+export async function extractPlanFromImages(images: PickedImage[]): Promise<ExtractedPlan> {
+  const base = (process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL ?? '').trim().replace(/\/+$/, '');
+  if (!base) {
+    throw new Error('Screenshots need the proxy. Set EXPO_PUBLIC_CLAUDE_PROXY_URL and restart the app.');
+  }
+
+  const encoded = [];
+  let total = 0;
+  for (const image of images.slice(0, MAX_IMAGES)) {
+    const item = await readAsBase64(image);
+    total += item.bytes;
+    encoded.push({ mime: item.mime, data: item.data });
+  }
+  if (total > MAX_TOTAL_BYTES) {
+    throw new Error('Those screenshots are too large together (over 12 MB). Pick fewer or smaller ones.');
+  }
+
+  // STEP 1-4: endpoint, method, headers, body
+  const response = await fetch(base + '/v1/extract-plan', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ images: encoded }),
+  });
+
+  // STEP 5: 400 = unsupported image, 413 = too large, 404 = old proxy, 429 = free limit.
+  const raw = await response.text();
+  if (!response.ok) {
+    let message: string | null = null;
+    try {
+      message = (JSON.parse(raw) as { error?: { message?: string } }).error?.message ?? null;
+    } catch {
+      // not JSON
+    }
+    throw new Error(message ?? `Screenshot error ${response.status}`);
+  }
+
+  const { text } = JSON.parse(raw) as { text?: string };
+  const body = text ?? '';
+  const start = body.indexOf('{');
+  const end = body.lastIndexOf('}');
+  if (start === -1 || end < start) {
+    throw new Error('Could not read numbers from those screenshots. Try clearer ones.');
+  }
+  const parsed = JSON.parse(body.slice(start, end + 1)) as Record<string, unknown>;
+
+  return {
+    pair: parsed.pair ? String(parsed.pair).toUpperCase() : null,
+    direction: parsed.direction === 'buy' || parsed.direction === 'sell' ? parsed.direction : null,
+    entry_price: num(parsed.entry_price),
+    stop_loss: num(parsed.stop_loss),
+    take_profit: num(parsed.take_profit),
+    size: num(parsed.size),
+    notes: parsed.notes ? String(parsed.notes) : null,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Many trades from history screenshots                                */
+/* ------------------------------------------------------------------ */
+
+export type HistoryTrade = {
+  pair: string | null;
+  direction: 'buy' | 'sell' | null;
+  entry_price: number | null;
+  exit_price: number | null;
+  size: number | null;
+  profit_loss: number | null;
+  closed_at: string | null;
+};
+
+/** Reads every closed trade it can see across several history screenshots. */
+export async function extractTradesFromImages(images: PickedImage[]): Promise<HistoryTrade[]> {
+  const base = (process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL ?? '').trim().replace(/\/+$/, '');
+  if (!base) {
+    throw new Error('Screenshots need the proxy. Set EXPO_PUBLIC_CLAUDE_PROXY_URL and restart the app.');
+  }
+
+  const encoded = [];
+  let total = 0;
+  for (const image of images.slice(0, MAX_IMAGES)) {
+    const item = await readAsBase64(image);
+    total += item.bytes;
+    encoded.push({ mime: item.mime, data: item.data });
+  }
+  if (total > MAX_TOTAL_BYTES) {
+    throw new Error('Those screenshots are too large together (over 12 MB). Pick fewer or smaller ones.');
+  }
+
+  // STEP 1-4: endpoint, method, headers, body
+  const response = await fetch(base + '/v1/extract-trades', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ images: encoded }),
+  });
+
+  // STEP 5: 400 = unsupported image, 404 = old proxy, 429 = free limit, 502 = no internet on the proxy.
+  const raw = await response.text();
+  if (!response.ok) {
+    let message: string | null = null;
+    try {
+      message = (JSON.parse(raw) as { error?: { message?: string } }).error?.message ?? null;
+    } catch {
+      // not JSON
+    }
+    throw new Error(message ?? `Screenshot error ${response.status}`);
+  }
+
+  const { text } = JSON.parse(raw) as { text?: string };
+  const body = text ?? '';
+  const start = body.indexOf('{');
+  const end = body.lastIndexOf('}');
+  if (start === -1 || end < start) {
+    throw new Error('Could not read trades from those screenshots. Try clearer ones.');
+  }
+  const parsed = JSON.parse(body.slice(start, end + 1)) as { trades?: Record<string, unknown>[] };
+
+  return (parsed.trades ?? []).map((row) => ({
+    pair: row.pair ? String(row.pair).toUpperCase() : null,
+    direction: row.direction === 'buy' || row.direction === 'sell' ? row.direction : null,
+    entry_price: num(row.entry_price),
+    exit_price: num(row.exit_price),
+    size: num(row.size),
+    profit_loss: num(row.profit_loss),
+    closed_at: row.closed_at ? String(row.closed_at) : null,
+  }));
+}
+
+===== src/lib/sizing.ts =====
+/**
+ * Lot size for a fixed amount of risk.
+ *
+ *   lots = risk in dollars / (distance from entry to stop x dollars per 1.00 of price move per lot)
+ *
+ * This is plain arithmetic on purpose. A wrong lot size costs real money, so the
+ * AI is never asked to do the maths.
+ *
+ * "Dollars per 1.00 of price move, per 1 lot" depends on your broker's contract
+ * size, so the app does not guess it. It is taken from, in this order:
+ *   1. a value you typed and saved for that pair
+ *   2. learned from your own past trades on that pair (median of profit / (move x lots))
+ */
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { supabase } from '@/lib/supabase';
+
+const KEY = 'edgewise.sizing.v1';
+
+export type SizingSettings = {
+  riskAmount: number | null;
+  /** pair -> dollars per 1.00 price move per 1 lot */
+  pointValues: Record<string, number>;
+};
+
+const EMPTY: SizingSettings = { riskAmount: null, pointValues: {} };
+
+export async function loadSizing(): Promise<SizingSettings> {
+  try {
+    const raw = await AsyncStorage.getItem(KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<SizingSettings>;
+      return {
+        riskAmount: typeof parsed.riskAmount === 'number' ? parsed.riskAmount : null,
+        pointValues: parsed.pointValues && typeof parsed.pointValues === 'object' ? parsed.pointValues : {},
+      };
+    }
+  } catch (err) {
+    console.error(err);
+  }
+  return EMPTY;
+}
+
+export async function saveSizing(settings: SizingSettings): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEY, JSON.stringify(settings));
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+/** Learns the per-lot value from past trades on this pair. Needs at least 3. */
+export async function learnPointValue(pair: string): Promise<{ value: number; count: number } | null> {
+  const { data, error } = await supabase
+    .from('trades')
+    .select('entry_price, exit_price, size, profit_loss')
+    .eq('pair', pair.trim().toUpperCase())
+    .limit(60);
+  if (error || !data) {
+    return null;
+  }
+
+  const ratios = (data as Record<string, unknown>[])
+    .map((row) => {
+      const move = Math.abs(Number(row.exit_price) - Number(row.entry_price));
+      const size = Number(row.size);
+      const pl = Math.abs(Number(row.profit_loss));
+      return move > 0 && size > 0 ? pl / (move * size) : NaN;
+    })
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+
+  if (ratios.length < 3) {
+    return null;
+  }
+  const mid = Math.floor(ratios.length / 2);
+  const median = ratios.length % 2 ? ratios[mid] : (ratios[mid - 1] + ratios[mid]) / 2;
+  return { value: median, count: ratios.length };
+}
+
+export type PointValue = { value: number; source: 'saved' | 'learned'; count?: number };
+
+export async function resolvePointValue(
+  pair: string,
+  settings: SizingSettings,
+): Promise<PointValue | null> {
+  const key = pair.trim().toUpperCase();
+  const saved = settings.pointValues[key];
+  if (saved && saved > 0) {
+    return { value: saved, source: 'saved' };
+  }
+  const learned = await learnPointValue(key);
+  return learned ? { value: learned.value, source: 'learned', count: learned.count } : null;
+}
+
+export type LotResult = {
+  /** Rounded DOWN to 0.01, so you never risk more than the amount. 0 = even 0.01 is too much. */
+  lots: number;
+  exact: number;
+  riskAtLots: number;
+  riskAtMinLot: number;
+};
+
+export function calcLots(input: {
+  risk: number;
+  entry: number;
+  stop: number;
+  valuePerUnit: number;
+}): LotResult | null {
+  const distance = Math.abs(input.entry - input.stop);
+  if (!(input.risk > 0) || !(input.valuePerUnit > 0) || !(distance > 0)) {
+    return null;
+  }
+  const exact = input.risk / (distance * input.valuePerUnit);
+  const lots = Math.floor(exact * 100 + 1e-9) / 100;
+  return {
+    lots,
+    exact,
+    riskAtLots: lots * distance * input.valuePerUnit,
+    riskAtMinLot: 0.01 * distance * input.valuePerUnit,
+  };
+}
+
+/** What a given lot size would lose if the stop is hit. */
+export function riskOf(lots: number, entry: number, stop: number, valuePerUnit: number): number {
+  return lots * Math.abs(entry - stop) * valuePerUnit;
+}
+
+===== MISSING src/lib/rules.ts =====
+
+===== src/components/voice-button.tsx =====
+/**
+ * A small "Speak" button: record, turn the clip into text through the proxy,
+ * and hand the words to `onText`. It never sends or saves anything itself.
+ */
+
+import { Ionicons } from '@expo/vector-icons';
+import {
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from 'expo-audio';
+import { useCallback, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+
+import { ThemedText } from '@/components/themed-text';
+import type { Theme } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
+import { useThemedStyles } from '@/lib/styles';
+import { transcribeOrQueue } from '@/lib/voice-queue';
+
+type VoiceButtonProps = {
+  onText: (text: string) => void;
+  disabled?: boolean;
+  label?: string;
+};
+
+export function VoiceButton({ onText, disabled, label = 'Speak' }: VoiceButtonProps) {
+  const theme = useTheme();
+  const styles = useThemedStyles(sheet);
+
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const state = useAudioRecorderState(recorder);
+  const recording = state.isRecording;
+
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const toggle = useCallback(async () => {
+    setError(null);
+    setNotice(null);
+    try {
+      if (recording) {
+        await recorder.stop();
+        const uri = recorder.uri;
+        if (!uri) {
+          throw new Error('The recording was empty. Hold the mic a little longer.');
+        }
+        setBusy(true);
+        const result = await transcribeOrQueue(uri);
+        if (result.queued) {
+          setNotice('No internet. Saved on this device. Use "Write them out" when you are back online.');
+        } else {
+          onText(result.text);
+        }
+        return;
+      }
+
+      const { granted } = await AudioModule.requestRecordingPermissionsAsync();
+      if (!granted) {
+        setError('Microphone permission was denied. Turn it on in your phone settings.');
+        return;
+      }
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : 'Voice failed. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  }, [onText, recorder, recording]);
+
+  return (
+    <View style={styles.wrap}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={recording ? 'Stop recording' : 'Record by voice'}
+        onPress={toggle}
+        disabled={(disabled || busy) && !recording}
+        style={({ pressed }) => [
+          styles.button,
+          recording && styles.active,
+          (disabled || busy) && !recording && styles.disabled,
+          pressed && styles.pressed,
+        ]}
+      >
+        {busy ? (
+          <ActivityIndicator color={theme.color.accent} />
+        ) : (
+          <Ionicons
+            name={recording ? 'stop' : 'mic'}
+            size={18}
+            color={recording ? theme.color.loss : theme.color.text}
+          />
+        )}
+        <ThemedText variant="label" tone={recording ? 'loss' : 'text'}>
+          {busy ? 'Writing it down…' : recording ? 'Tap to stop' : label}
+        </ThemedText>
+      </Pressable>
+      {notice ? (
+        <ThemedText variant="caption" tone="textSecondary">
+          {notice}
+        </ThemedText>
+      ) : null}
+      {error ? (
+        <ThemedText variant="caption" tone="loss">
+          {error}
+        </ThemedText>
+      ) : null}
+    </View>
+  );
+}
+
+const sheet = (t: Theme) =>
+  StyleSheet.create({
+    wrap: {
+      gap: t.space.one,
+      alignItems: 'flex-start',
+    },
+    button: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.space.one,
+      minHeight: 40,
+      paddingHorizontal: t.space.three,
+      borderRadius: t.radius.pill,
+      borderWidth: 1,
+      borderColor: t.color.borderStrong,
+      backgroundColor: t.color.bgSunken,
+    },
+    active: {
+      borderColor: t.color.loss,
+      backgroundColor: t.color.lossSoft,
+    },
+    disabled: {
+      opacity: 0.4,
+    },
+    pressed: {
+      opacity: 0.7,
+    },
+  });
+
+===== src/app/(app)/trades.tsx =====
+import { useMemo, useState } from 'react';
+import { View } from 'react-native';
+
+import { AddTradeSheet } from '@/components/add-trade-sheet';
+import { ImportReportSheet } from '@/components/import-report-sheet';
+import { TradeDetailSheet } from '@/components/trade-detail-sheet';
+import { colors } from '../../design/theme';
+import TradesScreen from '../../design/trades-screen';
+import { useTrades } from '@/hooks/use-trades';
+import { displaySetup } from '@/lib/setup-types';
+
+export default function Trades() {
+  const { trades, refresh } = useTrades();
+  const [addVisible, setAddVisible] = useState(false);
+  const [importVisible, setImportVisible] = useState(false);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+
+  const rows = useMemo(
+    () =>
+      trades.map((t) => ({
+        id: t.id,
+        date: new Date(t.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
+        pair: t.pair,
+        direction: t.direction === 'buy' ? 'Long' : 'Short',
+        setup: t.setup_type ? displaySetup(t.setup_type) : '',
+        mood: t.moods.length ? t.moods.join(', ') : '',
+        result: Math.round(t.pl * 100) / 100,
+      })),
+    [trades],
+  );
+
+  const selected = trades.find((t) => t.id === selectedId) ?? null;
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <TradesScreen
+        trades={rows}
+        onAdd={() => setAddVisible(true)}
+        onImport={() => setImportVisible(true)}
+        onSelect={(id) => setSelectedId(Number(id))}
+      />
+      <AddTradeSheet visible={addVisible} onClose={() => setAddVisible(false)} onSaved={refresh} />
+      <ImportReportSheet
+        visible={importVisible}
+        onClose={() => setImportVisible(false)}
+        trades={trades}
+        onImported={refresh}
+      />
+      <TradeDetailSheet trade={selected} onClose={() => setSelectedId(null)} />
+    </View>
+  );
+}
+
+===== src/app/(app)/index.tsx =====
+import { useState } from 'react';
+import { View } from 'react-native';
+
+import { AddTradeSheet } from '@/components/add-trade-sheet';
+import { ConnectBrokerSheet } from '@/components/connect-broker-sheet';
+import { HistoryImportSheet } from '@/components/history-import-sheet';
+import { ImportReportSheet } from '@/components/import-report-sheet';
+import { JournalSheet } from '@/components/journal-sheet';
+import { ScreenshotTradeSheet } from '@/components/screenshot-trade-sheet';
+import { useTrades } from '@/hooks/use-trades';
+import HomeScreen from '../../design/home-screen';
+import { colors } from '../../design/theme';
+
+type Open = null | 'plan' | 'shot' | 'many' | 'hand' | 'connect' | 'import';
+
+// The same home screen in BOTH designs; its colours follow the design mode. Its buttons open the real sheets.
+export default function Index() {
+  const { trades, refresh, live } = useTrades();
+  const [open, setOpen] = useState<Open>(null);
+  const close = () => setOpen(null);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <HomeScreen
+        tradeCount={trades.length}
+        onPlan={() => setOpen('plan')}
+        onScreenshot={() => setOpen('shot')}
+        onMany={() => setOpen('many')}
+        onManual={() => setOpen('hand')}
+        onConnect={() => setOpen('connect')}
+      />
+      <JournalSheet visible={open === 'plan'} onClose={close} onSaved={refresh} />
+      <ScreenshotTradeSheet visible={open === 'shot'} onClose={close} onSaved={refresh} />
+      <HistoryImportSheet visible={open === 'many'} onClose={close} onSaved={refresh} />
+      <AddTradeSheet visible={open === 'hand'} onClose={close} onSaved={refresh} />
+      <ConnectBrokerSheet
+        visible={open === 'connect'}
+        onClose={close}
+        trades={trades}
+        live={live}
+        onImportInstead={() => setOpen('import')}
+      />
+      <ImportReportSheet visible={open === 'import'} onClose={close} trades={trades} onImported={refresh} />
+    </View>
+  );
+}
+
+===== src/components/journal-home-card.tsx =====
+/**
+ * The "ways to add a trade" block for the home page, plus your open plans.
+ * Self-contained: it mounts its own sheets, so the home screen only needs
+ *   <JournalHomeCard onChanged={refresh} onConnect={() => setConnectVisible(true)} />
+ */
+
+import { useCallback, useEffect, useState } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
+
+import { AddTradeSheet } from '@/components/add-trade-sheet';
+import { JournalEntrySheet } from '@/components/journal-entry-sheet';
+import { HistoryImportSheet } from '@/components/history-import-sheet';
+import { gradeTone, JournalSheet } from '@/components/journal-sheet';
+import { ScreenshotTradeSheet } from '@/components/screenshot-trade-sheet';
+import { ThemedText } from '@/components/themed-text';
+import { Button } from '@/components/ui/button';
+import { Card, SectionHeader } from '@/components/ui/card';
+import { Pill } from '@/components/ui/pill';
+import type { Theme } from '@/constants/theme';
+import { formatShortDate } from '@/lib/format';
+import { listOpenEntries, type JournalEntry } from '@/lib/journal';
+import { useThemedStyles } from '@/lib/styles';
+
+type JournalHomeCardProps = {
+  /** Called after anything is saved, so the home screen can reload its trades. */
+  onChanged: () => void;
+  onConnect: () => void;
+};
+
+export function JournalHomeCard({ onChanged, onConnect }: JournalHomeCardProps) {
+  const styles = useThemedStyles(sheet);
+
+  const [entries, setEntries] = useState<JournalEntry[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [planVisible, setPlanVisible] = useState(false);
+  const [shotVisible, setShotVisible] = useState(false);
+  const [handVisible, setHandVisible] = useState(false);
+  const [histVisible, setHistVisible] = useState(false);
+  const [selected, setSelected] = useState<JournalEntry | null>(null);
+
+  const reload = useCallback(async () => {
+    try {
+      setLoadError(null);
+      setEntries(await listOpenEntries());
+    } catch (err) {
+      console.error(err);
+      setLoadError(
+        'Could not load your journal. If you have not yet, run scripts/create-journal-table.sql in the Supabase SQL editor.',
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  const changed = useCallback(() => {
+    reload();
+    onChanged();
+  }, [reload, onChanged]);
+
+  return (
+    <View style={styles.stack}>
+      <View>
+        <SectionHeader title="Journal" subtitle="Plan it before, talk it through, review it after." />
+        <Card style={styles.card}>
+          <Button label="Plan a trade (voice or text)" onPress={() => setPlanVisible(true)} />
+          <Button label="Add from a screenshot" variant="secondary" onPress={() => setShotVisible(true)} />
+          <Button label="Add many trades from history screenshots" variant="secondary" onPress={() => setHistVisible(true)} />
+          <Button label="Add a trade by hand" variant="secondary" onPress={() => setHandVisible(true)} />
+          <Button label="Connect MetaTrader (auto-sync)" variant="secondary" onPress={onConnect} />
+        </Card>
+      </View>
+
+      {loadError ? (
+        <ThemedText variant="caption" tone="loss">
+          {loadError}
+        </ThemedText>
+      ) : null}
+
+      {entries.length > 0 ? (
+        <View>
+          <SectionHeader title="Open plans" subtitle="Tap one to check in or close it out." />
+          <Card flush>
+            {entries.map((entry, index) => (
+              <View key={entry.id}>
+                {index > 0 ? <View style={styles.divider} /> : null}
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setSelected(entry)}
+                  style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+                >
+                  <View style={styles.rowMain}>
+                    <ThemedText variant="bodyStrong">{entry.pair}</ThemedText>
+                    <ThemedText variant="caption" tone="textTertiary">
+                      {formatShortDate(entry.created_at)} · {entry.status}
+                      {entry.checkins.length > 0 ? ` · ${entry.checkins.length} check-in` : ''}
+                    </ThemedText>
+                  </View>
+                  <Pill label={entry.direction} tone={entry.direction === 'buy' ? 'gain' : 'loss'} solid caps />
+                  {entry.grade ? <Pill label={entry.grade} tone={gradeTone(entry.grade)} /> : null}
+                </Pressable>
+              </View>
+            ))}
+          </Card>
+        </View>
+      ) : null}
+
+      <JournalSheet visible={planVisible} onClose={() => setPlanVisible(false)} onSaved={changed} />
+      <ScreenshotTradeSheet visible={shotVisible} onClose={() => setShotVisible(false)} onSaved={changed} />
+      <HistoryImportSheet visible={histVisible} onClose={() => setHistVisible(false)} onSaved={changed} />
+      <AddTradeSheet visible={handVisible} onClose={() => setHandVisible(false)} onSaved={changed} />
+      <JournalEntrySheet entry={selected} onClose={() => setSelected(null)} onChanged={changed} />
+    </View>
+  );
+}
+
+const sheet = (t: Theme) =>
+  StyleSheet.create({
+    stack: {
+      gap: t.space.three,
+    },
+    card: {
+      gap: t.space.two,
+    },
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.space.two,
+      paddingHorizontal: t.space.three,
+      paddingVertical: t.space.three,
+    },
+    rowMain: {
+      flex: 1,
+      gap: t.space.half,
+    },
+    pressed: {
+      backgroundColor: t.color.surfaceActive,
+    },
+    divider: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: t.color.border,
+    },
+  });
