@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import {
   Animated,
   Easing,
+  Platform,
   Pressable,
   PressableStateCallbackType,
   ScrollView,
@@ -12,6 +13,8 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { WebTopNavInset } from '@/constants/theme';
+import { useDesignMode } from './mode';
 import { colors, native } from './theme';
 import { useLoop, useReducedMotion } from './motion';
 
@@ -21,19 +24,31 @@ export const hovered = (s: PressableStateCallbackType) =>
   Boolean((s as unknown as { hovered?: boolean }).hovered);
 
 export function Page({ children }: { children: React.ReactNode }) {
+  const { mode } = useDesignMode();
+  // On web in dark mode, app-tabs.web.tsx renders an absolute top nav bar with height WebTopNavInset (72px).
+  // Offset the top padding so the page header is not obscured behind the top navigation bar.
+  const topPadding = mode === 'dark' && Platform.OS === 'web' ? WebTopNavInset + 20 : 28;
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ alignItems: 'center', paddingBottom: 120 }}>
-      <View style={{ width: '100%', maxWidth: 1120, paddingHorizontal: 20, paddingTop: 16 }}>{children}</View>
+      <View style={{ width: '100%', maxWidth: 1120, paddingHorizontal: 20, paddingTop: topPadding }}>{children}</View>
     </ScrollView>
   );
 }
 
 export function H1({ children }: { children: React.ReactNode }) {
   const { width } = useWindowDimensions();
+  const fontSize = width < 600 ? 34 : 44;
+  const lineHeight = width < 600 ? 42 : 52;
   return (
     <Text
       accessibilityRole="header"
-      style={{ fontSize: width < 600 ? 34 : 44, fontWeight: '700', letterSpacing: -1.2, color: colors.ink }}
+      style={{
+        fontSize,
+        lineHeight,
+        fontWeight: '700',
+        letterSpacing: -1.2,
+        color: colors.ink,
+      }}
     >
       {children}
     </Text>
