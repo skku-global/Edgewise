@@ -25,11 +25,23 @@ const RANGES: Record<string, RangeKey> = {
   '90 days': '90d',
   All: 'all',
 };
+const LABEL_OF: Partial<Record<RangeKey, string>> = Object.fromEntries(
+  Object.entries(RANGES).map(([label, key]) => [key, label]),
+);
 
 export default function Reports() {
   const router = useRouter();
   const { trades } = useTrades();
-  const [range, setRange] = useState<RangeKey>('all');
+  /** null = nothing picked yet; the default is worked out from the data. */
+  const [picked, setPicked] = useState<RangeKey | null>(null);
+
+  // "30 days" when there is something to show in it, otherwise "All" — a
+  // trader who just imported last quarter's history should not open Reports
+  // to a page of dashes.
+  const range: RangeKey = useMemo(() => {
+    if (picked) return picked;
+    return withinRange(trades, '30d', new Date()).length > 0 ? '30d' : 'all';
+  }, [picked, trades]);
 
   const data = useMemo(() => {
     const scoped = withinRange(trades, range, new Date());
@@ -95,8 +107,9 @@ export default function Reports() {
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <ReportsScreen
         {...data}
-        onTalk={() => router.push('/chat' as never)}
-        onRangeChange={(r) => setRange(RANGES[r] ?? 'all')}
+        range={LABEL_OF[range] ?? 'All'}
+        onTalk={() => router.push('/chat')}
+        onRangeChange={(r) => setPicked(RANGES[r] ?? 'all')}
       />
     </View>
   );

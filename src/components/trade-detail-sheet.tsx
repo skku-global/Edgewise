@@ -13,7 +13,6 @@
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Image,
   Modal,
   Pressable,
@@ -23,6 +22,7 @@ import {
 } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { Banner, type BannerTone } from '@/components/ui/banner';
 import { Button } from '@/components/ui/button';
 import { Card, SectionHeader } from '@/components/ui/card';
 import { Field } from '@/components/ui/field';
@@ -122,8 +122,15 @@ export function TradeDetailSheet({ trade, onClose, onUpdated }: TradeDetailSheet
   const [tradeMoods, setTradeMoods] = useState<string[]>([]);
   const [addingMood, setAddingMood] = useState(false);
 
-  // Sync state whenever trade changes
+  // Inline, not Alert.alert: that is a no-op on react-native-web, so on the
+  // web every "Saved" and every error from this sheet used to vanish.
+  const [notice, setNotice] = useState<{ tone: BannerTone; text: string } | null>(null);
+
+  // Sync state whenever a *different* trade is shown. Keyed on the ids on
+  // purpose: the trade object is rebuilt on every realtime reload, and
+  // re-running on identity would wipe a review the user is halfway through.
   useEffect(() => {
+    setNotice(null);
     if (!trade) {
       setShots([]);
       setTradeMoods([]);
@@ -141,6 +148,7 @@ export function TradeDetailSheet({ trade, onClose, onUpdated }: TradeDetailSheet
       .then((loaded) => setShots(loaded))
       .catch((err) => console.error('Failed to load shots:', err))
       .finally(() => setLoadingShots(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on ids, see the comment above
   }, [trade?.id, entry?.id]);
 
   const handleSaveReview = async () => {
@@ -152,11 +160,14 @@ export function TradeDetailSheet({ trade, onClose, onUpdated }: TradeDetailSheet
         thoughts: thoughts.trim() || null,
         emotion_after: emotionAfter,
       });
-      Alert.alert('Saved', 'Post-trade review updated successfully.');
+      setNotice({ tone: 'success', text: 'Review saved.' });
       onUpdated?.();
     } catch (err: unknown) {
       console.error(err);
-      Alert.alert('Error', err instanceof Error ? err.message : 'Could not save review changes.');
+      setNotice({
+        tone: 'error',
+        text: err instanceof Error ? err.message : 'Could not save review changes.',
+      });
     } finally {
       setSavingReview(false);
     }
@@ -165,7 +176,7 @@ export function TradeDetailSheet({ trade, onClose, onUpdated }: TradeDetailSheet
   const handleAddShot = async () => {
     if (!trade) return;
     if (shots.length >= 5) {
-      Alert.alert('Limit reached', 'Maximum 5 screenshots allowed per trade.');
+      setNotice({ tone: 'error', text: 'Maximum 5 screenshots allowed per trade.' });
       return;
     }
 
@@ -178,11 +189,15 @@ export function TradeDetailSheet({ trade, onClose, onUpdated }: TradeDetailSheet
       });
       if (shot) {
         setShots((prev) => [...prev, shot]);
+        setNotice({ tone: 'success', text: 'Screenshot attached.' });
         onUpdated?.();
       }
     } catch (err: unknown) {
       console.error(err);
-      Alert.alert('Upload Failed', err instanceof Error ? err.message : 'Could not upload screenshot.');
+      setNotice({
+        tone: 'error',
+        text: err instanceof Error ? err.message : 'Could not upload screenshot.',
+      });
     } finally {
       setUploadingShot(false);
     }
@@ -203,7 +218,7 @@ export function TradeDetailSheet({ trade, onClose, onUpdated }: TradeDetailSheet
       onUpdated?.();
     } catch (err: unknown) {
       console.error(err);
-      Alert.alert('Error', err instanceof Error ? err.message : 'Could not add mood.');
+      setNotice({ tone: 'error', text: err instanceof Error ? err.message : 'Could not add mood.' });
     } finally {
       setAddingMood(false);
     }
@@ -223,6 +238,8 @@ export function TradeDetailSheet({ trade, onClose, onUpdated }: TradeDetailSheet
       >
         {trade ? (
           <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            {notice ? <Banner tone={notice.tone} message={notice.text} /> : null}
+
             {/* The number the user opened this sheet for, on the hero colour so it
                 reads as the headline rather than the first of cards. */}
             <View style={styles.plCard}>

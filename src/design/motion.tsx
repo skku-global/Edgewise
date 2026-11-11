@@ -31,7 +31,7 @@ export function Rise({
       easing: ease,
       useNativeDriver: native,
     }).start();
-  }, [reduce]);
+  }, [reduce, v, delay]);
   const translateY = v.interpolate({ inputRange: [0, 1], outputRange: [reduce ? 0 : 16, 0] });
   return (
     <Animated.View style={[style, { opacity: v, transform: [{ translateY }] }]}>{children}</Animated.View>
@@ -58,6 +58,6 @@ export function useLoop(duration: number, pingPong = false) {
     const loop = Animated.loop(pingPong ? Animated.sequence([up, down]) : up);
     loop.start();
     return () => loop.stop();
-  }, [reduce]);
+  }, [reduce, v, duration, pingPong]);
   return v;
 }

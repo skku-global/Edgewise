@@ -27,6 +27,7 @@ import {
   type PlanInput,
 } from '@/lib/journal';
 import { MAX_IMAGES, readAsBase64 } from '@/lib/plan-vision';
+import { requireProxyUrl } from '@/lib/proxy-url';
 import { loadSizing, resolvePointValue } from '@/lib/sizing';
 import { supabase } from '@/lib/supabase';
 import { computeProfitLoss } from '@/lib/trade-math';
@@ -60,10 +61,7 @@ export function looksLikeSave(text: string): boolean {
 }
 
 export async function extractEntry(text: string, images: PickedImage[]): Promise<ChatEntry> {
-  const base = (process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL ?? '').trim().replace(/\/+$/, '');
-  if (!base) {
-    throw new Error('Saving through chat needs the proxy. Set EXPO_PUBLIC_CLAUDE_PROXY_URL and restart the app.');
-  }
+  const base = requireProxyUrl('Saving through chat');
 
   const encoded = [];
   let total = 0;

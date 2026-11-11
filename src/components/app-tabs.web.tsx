@@ -5,11 +5,11 @@
  * `expo-router/ui` is the headless tab primitive: it owns the routing and the
  * focused state, and hands the rendering over entirely.
  *
- * On desktop (>= 768px), links sit horizontally in the top bar with the AccountButton.
- * On mobile (< 768px), the top bar contains only the brand logo and the hamburger button
- * (styled after skku-global's sleek menu-btn). The mobile menu expands into a fullscreen
- * curtain featuring numbered links (01 Dashboard, 02 Trades, etc.), the seam divider,
- * and account access.
+ * On desktop (>= 768px), links sit either side of the logo in the top bar with the
+ * AccountButton; the logo itself is the way home. On mobile (< 768px), the top bar
+ * contains only the brand logo and the hamburger button (styled after skku-global's
+ * sleek menu-btn). The mobile menu expands into a fullscreen curtain featuring numbered
+ * links (01 Trades, 02 Calendar, etc.), the seam divider, and account access.
  *
  * The Coach tab is also accessible on all pages via a floating action button (FAB) at
  * bottom-right, giving 1-tap AI access everywhere while staying hidden on the chat screen itself.
@@ -25,7 +25,7 @@ import {
   type TabListProps,
   type TabTriggerSlotProps,
 } from 'expo-router/ui';
-import { Children, useEffect, useState } from 'react';
+import { Children, isValidElement, useEffect, useState, type ReactNode } from 'react';
 import {
   Platform,
   Pressable,
@@ -43,14 +43,25 @@ import { MaxContentWidth, WebTopNavInset, type Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useThemedStyles } from '@/lib/styles';
 
-/** Route name to href. Kept together so a new screen is one entry, not four. */
+/**
+ * Route name to href. Kept together so a new screen is one entry, not four.
+ *
+ * `index` is `hidden`: the logo in the middle of the bar is the way home, so a
+ * "Dashboard" link next to it was a second button for the same thing. It still
+ * needs a trigger, though — `expo-router/ui` builds the tab navigator from the
+ * triggers it finds inside `TabList`, and a route with no trigger is simply not
+ * a screen any more. Dropping the entry outright made `/` unreachable.
+ */
 const LINKS = [
-  { name: 'index', href: '/', label: 'Dashboard' },
-  { name: 'trades', href: '/trades', label: 'Trades' },
-  { name: 'calendar', href: '/calendar', label: 'Calendar' },
-  { name: 'reports', href: '/reports', label: 'Reports' },
-  { name: 'chat', href: '/chat', label: 'Coach' },
+  { name: 'index', href: '/', label: 'Dashboard', hidden: true },
+  { name: 'trades', href: '/trades', label: 'Trades', hidden: false },
+  { name: 'calendar', href: '/calendar', label: 'Calendar', hidden: false },
+  { name: 'reports', href: '/reports', label: 'Reports', hidden: false },
+  { name: 'chat', href: '/chat', label: 'Coach', hidden: false },
 ] as const;
+
+const VISIBLE_LINKS = LINKS.filter((link) => !link.hidden);
+const HIDDEN_NAMES = new Set<string>(LINKS.filter((link) => link.hidden).map((link) => link.name));
 
 export const MobileBreakpoint = 768;
 
@@ -148,16 +159,20 @@ function NavBar({ menuOpen = false, onToggleMenu, isMobile = false, ...props }: 
   const sheet = useThemedStyles(navSheet);
   const router = useRouter();
   const kids = Children.toArray(props.children);
+  const shown = kids.filter((kid) => !isHiddenTrigger(kid));
+  // Hidden triggers (the home route) and, on a phone, every trigger: they stay
+  // mounted so Tabs registers the routes, but take no space.
+  const parked = isMobile ? kids : kids.filter(isHiddenTrigger);
+  const half = Math.ceil(shown.length / 2);
 
   return (
     <View {...props} style={[props.style, sheet.bar, sheet.barFrame]}>
-      {/* Triggers stay mounted so Tabs registers the routes, hidden on mobile */}
-      {isMobile ? <View style={sheet.linksHidden}>{kids}</View> : null}
+      <View style={sheet.linksHidden}>{parked}</View>
       <NavFrame
         wide={!isMobile}
-        onLogo={() => router.navigate('/' as any)}
-        linksLeft={isMobile ? null : kids.slice(0, 2)}
-        linksRight={isMobile ? null : kids.slice(2)}
+        onLogo={() => router.navigate('/')}
+        linksLeft={isMobile ? null : shown.slice(0, half)}
+        linksRight={isMobile ? null : shown.slice(half)}
         menu={<MenuButton open={menuOpen} onPress={onToggleMenu} />}
         tools={
           <>
@@ -168,6 +183,13 @@ function NavBar({ menuOpen = false, onToggleMenu, isMobile = false, ...props }: 
       />
     </View>
   );
+}
+
+function isHiddenTrigger(kid: ReactNode): boolean {
+  if (!isValidElement<{ name?: string }>(kid)) {
+    return false;
+  }
+  return HIDDEN_NAMES.has(kid.props.name ?? '');
 }
 
 /**
@@ -207,7 +229,7 @@ function MenuButton({ open, onPress }: { open: boolean; onPress?: () => void }) 
 
 /**
  * Fullscreen mobile curtain menu — inspired by skku-global's Menu.jsx.
- * Numbered items (01 Dashboard, 02 Trades...), seam divider, and account actions.
+ * Numbered items (01 Trades, 02 Calendar...), seam divider, and account actions.
  */
 function CurtainMenu({
   onClose,
@@ -231,9 +253,9 @@ function CurtainMenu({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  const handleSelect = (href: string) => {
+  const handleSelect = (href: (typeof VISIBLE_LINKS)[number]['href']) => {
     onClose();
-    router.navigate(href as any);
+    router.navigate(href);
   };
 
   return (
@@ -243,11 +265,8 @@ function CurtainMenu({
         showsVerticalScrollIndicator={false}
       >
         <View style={sheet.curtainNav}>
-          {LINKS.map((link, i) => {
-            const isActive =
-              link.href === '/'
-                ? activePath === '/' || activePath === ''
-                : activePath === link.href || activePath.startsWith(link.href);
+          {VISIBLE_LINKS.map((link, i) => {
+            const isActive = activePath === link.href || activePath.startsWith(link.href + '/');
 
             return (
               <Pressable

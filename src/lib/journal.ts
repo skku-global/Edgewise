@@ -14,6 +14,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { proxyErrorMessage, requireProxyUrl } from '@/lib/proxy-url';
 import { getCachedAiReading, processShotImage, saveCachedAiReading } from '@/lib/shots';
 import { supabase } from '@/lib/supabase';
 
@@ -252,26 +253,11 @@ export function capGrade(grade: string, flags: string[]): string {
 /* Talking to the proxy                                                */
 /* ------------------------------------------------------------------ */
 
-function proxyBase(): string {
-  const base = (process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL ?? '').trim().replace(/\/+$/, '');
-  if (!base) {
-    throw new Error('The AI proxy is not set. Set EXPO_PUBLIC_CLAUDE_PROXY_URL and restart the app.');
-  }
-  return base;
-}
-
-function errorMessage(raw: string): string | null {
-  try {
-    return (JSON.parse(raw) as { error?: { message?: string } }).error?.message ?? null;
-  } catch {
-    return null;
-  }
-}
-
 /** One question in, plain text out. */
 async function askModel(system: string, prompt: string, maxTokens = 4000): Promise<string> {
+  const base = requireProxyUrl('Plan grading');
   // STEP 1-4: endpoint, method, headers, body
-  const response = await fetch(proxyBase() + '/v1/messages', {
+  const response = await fetch(base + '/v1/messages', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -284,7 +270,7 @@ async function askModel(system: string, prompt: string, maxTokens = 4000): Promi
   // STEP 5: status code first. 404 = wrong model name, 429 = free limit, 502 = proxy down.
   const raw = await response.text();
   if (!response.ok) {
-    throw new Error(errorMessage(raw) ?? `AI error ${response.status}`);
+    throw new Error(proxyErrorMessage(response.status, raw, base));
   }
   const data = JSON.parse(raw) as { content?: { type: string; text?: string }[] };
   return (data.content ?? [])
@@ -594,7 +580,8 @@ export async function extractTradeFromImage(uri: string, mimeHint?: string): Pro
   }
 
   // STEP 1-4: endpoint, method, headers (the image type), body (the bytes)
-  const response = await fetch(proxyBase() + '/v1/extract-trade', {
+  const base = requireProxyUrl('Reading screenshots');
+  const response = await fetch(base + '/v1/extract-trade', {
     method: 'POST',
     headers: { 'content-type': contentType },
     body: bodyToSend,
@@ -603,7 +590,7 @@ export async function extractTradeFromImage(uri: string, mimeHint?: string): Pro
   // STEP 5: 400 = unsupported image, 413 = too large, 404 = old proxy, 429 = free limit.
   const raw = await response.text();
   if (!response.ok) {
-    throw new Error(errorMessage(raw) ?? `Screenshot error ${response.status}`);
+    throw new Error(proxyErrorMessage(response.status, raw, base));
   }
   const { text } = JSON.parse(raw) as { text?: string };
   const parsed = parseJson<Partial<ExtractedTrade>>(text ?? '');

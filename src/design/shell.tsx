@@ -12,11 +12,14 @@ import { useLoop } from './motion';
 import HamburgerMenu from './menu';
 import { ModeToggle } from './mode-switch';
 
-// WIRE: replace with the signed-in user's initials
-const INITIALS = 'CM';
+/** Shown before the session has loaded; replaced by the user's initials. */
+const INITIALS = '··';
 
+/**
+ * No "Dashboard" entry: the logo in the middle is the way home, which keeps the
+ * bar symmetrical (two links either side) and matches the dark design's nav.
+ */
 const TABS: { label: string; href: string }[] = [
-  { label: 'Dashboard', href: '/' },
   { label: 'Trades', href: '/trades' },
   { label: 'Calendar', href: '/calendar' },
   { label: 'Reports', href: '/reports' },

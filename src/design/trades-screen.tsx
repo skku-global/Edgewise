@@ -67,6 +67,16 @@ export default function TradesScreen({ trades = [], onAdd, onImport, onSelect }:
     if (mood !== 'All' && t.mood !== mood) return false;
     return true;
   });
+  // Two different empties: no history at all, or history the filters hide.
+  // The first wants onboarding; the second wants a way out of the filters,
+  // not "Log your first trade" over a list that is full.
+  const empty = trades.length === 0;
+  const filteredOut = !empty && shown.length === 0;
+  const clearFilters = () => {
+    setDir('All');
+    setSetup('All');
+    setMood('All');
+  };
   const widths: (number | `${number}%`)[][] = [
     ['70%', '60%', '50%', '80%', '60%', '50%'],
     ['60%', '70%', '55%', '65%', '70%', '45%'],
@@ -106,7 +116,7 @@ export default function TradesScreen({ trades = [], onAdd, onImport, onSelect }:
               </Text>
             ))}
           />
-          {shown.length > 0
+          {shown.length > 0 || filteredOut
             ? shown.map((t, i) => (
                 <Row
                   key={String(t.id ?? i)}
@@ -128,7 +138,19 @@ export default function TradesScreen({ trades = [], onAdd, onImport, onSelect }:
                 <Row key={r} cols={cols} cells={w.map((x, i) => <Skeleton key={i} width={x} />)} />
               ))}
 
-          {shown.length === 0 ? (
+          {filteredOut ? (
+            <View style={{ alignItems: 'center', padding: 32 }}>
+              <Text style={{ fontSize: 22, fontWeight: '700', letterSpacing: -0.4, color: colors.ink }}>
+                No trades match these filters
+              </Text>
+              <Text style={{ marginTop: 6, marginBottom: 16, fontSize: 16, color: colors.muted, textAlign: 'center', maxWidth: 420 }}>
+                {trades.length} trade{trades.length === 1 ? '' : 's'} hidden by the direction, setup or mood you picked.
+              </Text>
+              <Button variant="secondary" label="Clear filters" onPress={clearFilters} />
+            </View>
+          ) : null}
+
+          {empty ? (
             <View
               pointerEvents="box-none"
               style={{

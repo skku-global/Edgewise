@@ -11,6 +11,7 @@ import {
   formatAmount,
   formatPrice,
   formatRatio,
+  formatRelative,
   formatShortDate,
   formatSigned,
 } from '../format';
@@ -80,5 +81,27 @@ describe('formatShortDate', () => {
     // Built from local parts so the assertion does not depend on the machine's
     // timezone shifting the date across midnight.
     expect(formatShortDate(new Date(2026, 7, 10, 12, 0).toISOString())).toBe('Aug 10');
+  });
+});
+
+describe('formatRelative', () => {
+  const now = new Date('2026-11-11T12:00:00Z');
+
+  it('rounds anything under a minute to "just now"', () => {
+    expect(formatRelative('2026-11-11T11:59:30Z', now)).toBe('just now');
+  });
+
+  it('counts minutes, hours and days', () => {
+    expect(formatRelative('2026-11-11T11:15:00Z', now)).toBe('45m ago');
+    expect(formatRelative('2026-11-11T09:00:00Z', now)).toBe('3h ago');
+    expect(formatRelative('2026-11-09T12:00:00Z', now)).toBe('2d ago');
+  });
+
+  it('falls back to a date once it is a week old', () => {
+    expect(formatRelative('2026-10-19T12:00:00Z', now)).toBe(formatShortDate('2026-10-19T12:00:00Z'));
+  });
+
+  it('does not invent a future for an unparseable date', () => {
+    expect(formatRelative('not a date', now)).toBe('just now');
   });
 });

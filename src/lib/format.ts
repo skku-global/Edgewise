@@ -27,6 +27,32 @@ export function formatFullDate(iso: string): string {
   });
 }
 
+/**
+ * "just now", "5m ago", "3h ago", "2d ago" — for the home screen's list of
+ * trades in flight, where "how long has this been open" matters more than the
+ * clock time. Anything older than a week falls back to the short date, because
+ * "23d ago" is harder to place than "Oct 19".
+ */
+export function formatRelative(iso: string, now: Date = new Date()): string {
+  const diffMs = now.getTime() - new Date(iso).getTime();
+  if (!Number.isFinite(diffMs) || diffMs < 60_000) {
+    return 'just now';
+  }
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h ago`;
+  }
+  const days = Math.floor(hours / 24);
+  if (days < 7) {
+    return `${days}d ago`;
+  }
+  return formatShortDate(iso);
+}
+
 /** Price with at most two decimals, keeping whole numbers clean. */
 export function formatPrice(value: number): string {
   return value % 1 === 0 ? `${value}` : value.toFixed(2);

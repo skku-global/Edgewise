@@ -55,3 +55,7 @@ coverage/
 *.ex5
 
 .redesign-backup
+
+# One-off scan and dump output from local codemod sessions
+scan*.txt
+*-dump.txt

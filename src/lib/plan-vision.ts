@@ -15,6 +15,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 
 import type { PickedImage } from '@/lib/coach-vision';
+import { requireProxyUrl } from '@/lib/proxy-url';
 import { getCachedAiReading, processShotImage, saveCachedAiReading } from '@/lib/shots';
 
 export const MAX_IMAGES = 6;
@@ -89,10 +90,7 @@ const num = (value: unknown): number | null =>
     : Number(value);
 
 export async function extractPlanFromImages(images: PickedImage[]): Promise<ExtractedPlan> {
-  const base = (process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL ?? '').trim().replace(/\/+$/, '');
-  if (!base) {
-    throw new Error('Screenshots need the proxy. Set EXPO_PUBLIC_CLAUDE_PROXY_URL and restart the app.');
-  }
+  const base = requireProxyUrl('Reading screenshots');
 
   const encoded = [];
   let total = 0;
@@ -176,10 +174,7 @@ export type HistoryTrade = {
 
 /** Reads every closed trade it can see across several history screenshots. */
 export async function extractTradesFromImages(images: PickedImage[]): Promise<HistoryTrade[]> {
-  const base = (process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL ?? '').trim().replace(/\/+$/, '');
-  if (!base) {
-    throw new Error('Screenshots need the proxy. Set EXPO_PUBLIC_CLAUDE_PROXY_URL and restart the app.');
-  }
+  const base = requireProxyUrl('Reading screenshots');
 
   const encoded = [];
   let total = 0;

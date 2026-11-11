@@ -1,3 +1,51 @@
+# Edgewise — status as of 2026-11-11
+
+Project-wide sweep. Verified against the live code, the live Supabase and the
+web export, not from memory.
+
+## Verified state right now
+
+- `npx tsc --noEmit` → clean
+- `npx eslint src --max-warnings=0` → clean (was 8 warnings)
+- `npx jest` → 315/315 across 19 suites (was 304/18)
+- `npx expo export --platform web` → exits 0
+- Supabase project resolves again (`/auth/v1/settings` 200). The anon key is
+  denied on `trades` and `moods` (42501), as `secure-rls.sql` intends.
+  `journal_entries`, `entry_shots`, `user_settings`, `chat_messages` and the
+  `close_entry` RPC all exist live. The anon role can still SELECT those four
+  tables and gets zero rows through RLS; a `revoke ... from anon` to match
+  `trades` would be tidier but is not a leak.
+
+## What was broken, and what changed
+
+- **Staged nav change made `/` unreachable in the dark web design.** Removing
+  the Dashboard entry from `LINKS` also removed its `TabTrigger`, and
+  `expo-router/ui` only builds screens for routes that have one. The home route
+  now keeps a hidden trigger; the visible bar is Trades · Calendar | logo |
+  Reports · Coach in both designs, and the logo is the way home.
+- **An open plan could not be resumed.** The only list of in-flight journal
+  entries lived in `journal-home-card.tsx`, which nothing rendered since the
+  redesign. `useTrades()` now exposes `openEntries` (realtime-updated), and the
+  home screen shows them under "In progress"; tapping one reopens the journal
+  sheet at the right phase.
+- **Five AI features disagreed about where the proxy was.** Chat fell back to
+  the page origin; plan grading, voice, chat-save and both screenshot readers
+  threw "proxy not set". `src/lib/proxy-url.ts` is the one resolver now.
+- **`Alert.alert` is a no-op on react-native-web.** Chat's "Clear history" did
+  nothing, and the trade sheet's Saved/Error messages never showed. Replaced
+  with `confirmAsync` (`src/lib/dialog.ts`) and inline banners.
+- **Journal sheet carried screenshots across sessions.** A new plan opened with
+  the previous entry's thumbnails and "requirement met". State now resets.
+- **Reports** highlighted "30 days" while computing "All". The route owns the
+  range and defaults to 30 days only when that window has trades.
+- **Trades** showed "No trades yet / Log your first trade" over a full list
+  whenever the filters hid everything. Now "No trades match" + Clear filters.
+- Home also shows last-30-day net / win rate / count, the five latest trades,
+  and a third entry point for the AI screenshot importer (orphaned before).
+- Deleted: `src/classic/*` (dead since the redesign), the components only it
+  used, `api/v1/*` (superseded by `api/gateway.mjs` via the `/v1/:route`
+  rewrite), eleven one-off codemod scripts and ~500 KB of dumps in the root.
+
 # Edgewise — status as of 2026-08-16
 
 Snapshot written before a shutdown. Verified against the live code and DB, not from memory.

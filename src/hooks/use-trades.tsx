@@ -122,6 +122,13 @@ export type LoadedTrade = TradeRow & {
 
 export type UseTradesResult = {
   trades: LoadedTrade[];
+  /**
+   * Journal entries that are planned or open — trades in flight, newest first.
+   * Loaded here rather than by the home screen because the realtime channel
+   * below already watches `journal_entries`, so a check-in saved on the phone
+   * updates the laptop's "In progress" list without a second subscription.
+   */
+  openEntries: JournalEntry[];
   loading: boolean;
   refreshing: boolean;
   error: string | null;
@@ -154,6 +161,7 @@ export function useTrades(): UseTradesResult {
 
 export function TradesProvider({ children }: PropsWithChildren) {
   const [trades, setTrades] = useState<LoadedTrade[]>([]);
+  const [openEntries, setOpenEntries] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -163,13 +171,29 @@ export function TradesProvider({ children }: PropsWithChildren) {
     try {
       setError(null);
 
-      const { data: tradeData, error: tradeError } = await supabase
-        .from('trades')
-        .select(TRADE_COLUMNS)
-        .order('created_at', { ascending: false });
+      const [{ data: tradeData, error: tradeError }, openRes] = await Promise.all([
+        supabase.from('trades').select(TRADE_COLUMNS).order('created_at', { ascending: false }),
+        supabase
+          .from('journal_entries')
+          .select('*')
+          .neq('status', 'closed')
+          .order('created_at', { ascending: false })
+          .limit(20),
+      ]);
 
       if (tradeError) {
         throw tradeError;
+      }
+
+      // The journal table is a later migration than trades. If it is missing,
+      // the trade list must still render — so this is a warning, not a throw.
+      if (openRes.error) {
+        console.warn('Could not load open journal entries:', openRes.error.message);
+        setOpenEntries([]);
+      } else {
+        setOpenEntries(
+          ((openRes.data as Record<string, unknown>[]) ?? []).map(normalize),
+        );
       }
 
       const rows = (tradeData as RawTrade[]) ?? [];
@@ -366,8 +390,8 @@ export function TradesProvider({ children }: PropsWithChildren) {
   }, [load]);
 
   const value = useMemo<UseTradesResult>(
-    () => ({ trades, loading, refreshing, error, refresh, live }),
-    [trades, loading, refreshing, error, refresh, live],
+    () => ({ trades, openEntries, loading, refreshing, error, refresh, live }),
+    [trades, openEntries, loading, refreshing, error, refresh, live],
   );
 
   return <TradesContext.Provider value={value}>{children}</TradesContext.Provider>;

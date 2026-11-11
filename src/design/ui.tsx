@@ -234,7 +234,7 @@ function WaveBar({ delay }: { delay: number }) {
     );
     loop.start();
     return () => loop.stop();
-  }, [reduce]);
+  }, [reduce, v, delay]);
   return (
     <Animated.View
       style={{ width: 6, height: 44, borderRadius: 3, backgroundColor: colors.greenDark, transform: [{ scaleY: v }] }}

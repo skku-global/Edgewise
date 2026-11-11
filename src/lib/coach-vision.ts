@@ -14,6 +14,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 
 import type { ClaudeTurn } from '@/lib/claude-client';
+import { requireProxyUrl } from '@/lib/proxy-url';
 
 export type PickedImage = { uri: string; mime: string; name: string };
 
@@ -74,10 +75,7 @@ export async function askWithImage(
   history: ClaudeTurn[],
   image: PickedImage | PickedImage[],
 ): Promise<string> {
-  const base = (process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL ?? '').trim().replace(/\/+$/, '');
-  if (!base) {
-    throw new Error('Screenshots need the proxy. Set EXPO_PUBLIC_CLAUDE_PROXY_URL and restart the app.');
-  }
+  const base = requireProxyUrl('Screenshots');
 
   const list = (Array.isArray(image) ? image : [image]).slice(0, MAX_IMAGES);
   const messages: ClaudeTurn[] = [

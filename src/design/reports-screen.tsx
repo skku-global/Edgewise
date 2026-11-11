@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Animated, Text, View, useWindowDimensions } from 'react-native';
 import { Button, H1, Page, Segmented } from './ui';
 import { Rise, useReducedMotion } from './motion';
@@ -27,9 +27,17 @@ export type ReportsProps = {
   byMethod?: Item[];
   coverage?: CoverageData;
   insight?: string;
+  /**
+   * The selected range label, owned by the route. The screen used to keep its
+   * own copy defaulting to "30 days" while the route computed "All", so the
+   * highlighted pill and the numbers under it disagreed on first load.
+   */
+  range: string;
   onTalk?: () => void;
   onRangeChange?: (range: string) => void;
 };
+
+export const RANGE_LABELS = ['7 days', '30 days', '90 days', 'All'] as const;
 
 // WIRE: change '$' if your results use another currency
 const money = (r: number) => (r >= 0 ? '+' : '-') + '$' + Math.abs(r).toLocaleString('en-US');
@@ -39,7 +47,7 @@ function GrowBar({ h, last, delay }: { h: number; last: boolean; delay: number }
   const reduce = useReducedMotion();
   useEffect(() => {
     Animated.timing(v, { toValue: 1, duration: reduce ? 100 : 240, delay: reduce ? 0 : Math.min(delay, 120) * 0.25, easing: ease, useNativeDriver: native }).start();
-  }, []);
+  }, [v, delay, reduce]);
   const translateY = v.interpolate({ inputRange: [0, 1], outputRange: [h / 2, 0] });
   return (
     <Animated.View
@@ -53,7 +61,7 @@ function Rows({ title, items }: { title: string; items: Item[] }) {
   const v = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(v, { toValue: 1, duration: 400, delay: 100, easing: ease, useNativeDriver: false }).start();
-  }, []);
+  }, [v]);
   return (
     <View style={{ flexGrow: 1, flexBasis: 320, padding: 24, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }}>
       <Text style={{ fontSize: 15, fontWeight: '600', color: colors.muted, marginBottom: 8 }}>{title}</Text>
@@ -77,10 +85,9 @@ function Rows({ title, items }: { title: string; items: Item[] }) {
 }
 
 export default function ReportsScreen({ net, winRate, profitFactor, growth = [], bySetup = [], byMood = [],
-  byMethod = [], coverage, insight, onTalk, onRangeChange }: ReportsProps) {
+  byMethod = [], coverage, insight, range, onTalk, onRangeChange }: ReportsProps) {
   const { width } = useWindowDimensions();
   const big = width < 600 ? 44 : 60;
-  const [range, setRange] = useState('30 days');
   const stat = (label: string, value: string, color?: string) => (
     <View style={{ flexGrow: 1, flexBasis: 200 }}>
       <Text style={{ fontSize: big, fontWeight: '700', letterSpacing: -2, color: color ?? colors.ink }}>{value}</Text>
@@ -97,14 +104,7 @@ export default function ReportsScreen({ net, winRate, profitFactor, growth = [],
           <H1>Reports</H1>
           <Text style={{ marginTop: 8, fontSize: 18, color: colors.muted }}>What is working, and what is not.</Text>
         </View>
-        <Segmented
-          options={['7 days', '30 days', '90 days', 'All']}
-          value={range}
-          onChange={(r) => {
-            setRange(r);
-            if (onRangeChange) onRangeChange(r);
-          }}
-        />
+        <Segmented options={[...RANGE_LABELS]} value={range} onChange={(r) => onRangeChange?.(r)} />
       </Rise>
 
       <Rise delay={150} style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 28, marginTop: 32 }}>

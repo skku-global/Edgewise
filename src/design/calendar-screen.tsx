@@ -26,7 +26,7 @@ function Bar({ h, color, delay }: { h: number; color: string; delay: number }) {
   const reduce = useReducedMotion();
   useEffect(() => {
     Animated.timing(v, { toValue: 1, duration: reduce ? 150 : 700, delay: reduce ? 0 : delay, easing: ease, useNativeDriver: native }).start();
-  }, []);
+  }, [v, delay, reduce]);
   const translateY = v.interpolate({ inputRange: [0, 1], outputRange: [h / 2, 0] });
   return (
     <Animated.View

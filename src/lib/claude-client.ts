@@ -18,6 +18,8 @@
  * decides what to render, so the UI never shows a dead send button.
  */
 
+import { getEffectiveProxyUrl, hasProxy, proxyErrorMessage, requireProxyUrl } from "./proxy-url";
+
 /** Overridable so the model can be changed without touching code. */
 const MODEL = (process.env.EXPO_PUBLIC_CLAUDE_MODEL ?? "").trim() || "claude-sonnet-5";
 
@@ -60,20 +62,14 @@ If there is no briefing (the user has logged no trades yet), say so and point th
 Today's date is ${new Date().toISOString().slice(0, 10)}.`;
 }
 
-export function getEffectiveProxyUrl(): string {
-  const envUrl = (process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL ?? "").trim();
-  if (envUrl) return envUrl;
-  if (typeof window !== "undefined" && window.location?.origin) {
-    return window.location.origin;
-  }
-  return "";
-}
+/** Re-exported so existing callers keep working; the logic lives in proxy-url.ts. */
+export { getEffectiveProxyUrl };
 
 /**
  * True when a proxy is configured (the proxy owns its key, so this client never needs one).
  */
 export function hasClaudeKey(): boolean {
-  return getEffectiveProxyUrl() !== "";
+  return hasProxy();
 }
 
 /**
@@ -85,10 +81,7 @@ export async function askClaude(
   briefing: string,
   history: ClaudeTurn[],
 ): Promise<string> {
-  const proxy = getEffectiveProxyUrl();
-  if (!proxy) {
-    throw new Error("Coach requests need the proxy. Set EXPO_PUBLIC_CLAUDE_PROXY_URL.");
-  }
+  const proxy = requireProxyUrl("Coach");
 
   const messages: ClaudeTurn[] = [
     ...(briefing
@@ -104,16 +97,13 @@ export async function askClaude(
     system: buildSystemPrompt(),
   });
 
-  const response = await fetch(proxy.replace(/\/+$/, "") + "/v1/messages", {
+  const response = await fetch(proxy + "/v1/messages", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body,
   });
   if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(
-      extractErrorMessage(errorBody) ?? `Claude proxy error ${response.status}`,
-    );
+    throw new Error(proxyErrorMessage(response.status, await response.text(), proxy));
   }
   return readReply((await response.json()) as MessagesResponse);
 }
@@ -150,14 +140,4 @@ function readReply(data: MessagesResponse): string {
   }
 
   return text;
-}
-
-/** Pulls Anthropic's human-readable message out of an error body, if any. */
-function extractErrorMessage(body: string): string | null {
-  try {
-    const parsed = JSON.parse(body) as { error?: { message?: string } };
-    return parsed.error?.message ?? null;
-  } catch {
-    return null;
-  }
 }

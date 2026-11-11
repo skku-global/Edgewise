@@ -37,7 +37,7 @@ function Dot({ delay }: { delay: number }) {
     );
     loop.start();
     return () => loop.stop();
-  }, [reduce]);
+  }, [reduce, v, delay]);
   const translateY = v.interpolate({ inputRange: [0, 1], outputRange: [0, -5] });
   return <Animated.View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: colors.muted, opacity: 0.6, transform: [{ translateY }] }} />;
 }

@@ -18,6 +18,8 @@
 
 import { Platform } from 'react-native';
 
+import { requireProxyUrl } from '@/lib/proxy-url';
+
 /** The recording could not be sent because there is no internet right now. */
 export class OfflineError extends Error {
   constructor() {
@@ -33,11 +35,8 @@ export function audioMime(blob: Blob): string {
 
 /** Sends the audio bytes and returns the words. Throws OfflineError or a readable message. */
 export async function transcribeBlob(blob: Blob, mime: string): Promise<string> {
-  const proxy = (process.env.EXPO_PUBLIC_CLAUDE_PROXY_URL ?? '').trim();
-  if (!proxy) {
-    // Voice needs the proxy because the proxy is what holds the Gemini key.
-    throw new Error('Voice needs the proxy. Set EXPO_PUBLIC_CLAUDE_PROXY_URL and restart the app.');
-  }
+  // Voice needs the proxy because the proxy is what holds the speech-to-text key.
+  const proxy = requireProxyUrl('Voice');
   if (blob.size === 0) {
     throw new Error('The recording was empty. Hold the mic a little longer.');
   }
@@ -48,7 +47,7 @@ export async function transcribeBlob(blob: Blob, mime: string): Promise<string> 
   // STEP 1 (endpoint) + STEP 2 (method) + STEP 3 (headers) + STEP 4 (body)
   let response: Response;
   try {
-    response = await fetch(proxy.replace(/\/+$/, '') + '/v1/transcribe', {
+    response = await fetch(proxy + '/v1/transcribe', {
       method: 'POST',
       headers: { 'content-type': mime },
       body: blob,

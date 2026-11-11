@@ -27,7 +27,6 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -55,6 +54,7 @@ import {
   type ChatEntry,
 } from '@/lib/chat-save';
 import { askWithImage, pickScreenshots, type PickedImage } from '@/lib/coach-vision';
+import { confirmAsync } from '@/lib/dialog';
 import { useThemedStyles } from '@/lib/styles';
 import { supabase } from '@/lib/supabase';
 import { buildTradingContext, fetchTradingContext, type ContextTrade } from '@/lib/trade-context';
@@ -142,27 +142,22 @@ export default function ChatScreen() {
     loadHistory();
   }, [loadContext, loadHistory]);
 
-  const handleClearHistory = useCallback(() => {
-    Alert.alert(
+  const handleClearHistory = useCallback(async () => {
+    // `confirmAsync`, not `Alert.alert`: the latter does nothing on the web, so
+    // this button was dead there — tapped, confirmed nothing, deleted nothing.
+    const ok = await confirmAsync(
       'Clear chat history?',
-      'This will delete all saved messages from your chat history.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const { error } = await supabase.from('chat_messages').delete().neq('id', 0);
-              if (error) console.error('Clear chat history error:', error);
-              setMessages([]);
-            } catch (err) {
-              console.error(err);
-            }
-          },
-        },
-      ],
+      'This deletes every saved message in your Coach history.',
+      { confirmLabel: 'Clear', destructive: true },
     );
+    if (!ok) return;
+    try {
+      const { error } = await supabase.from('chat_messages').delete().neq('id', 0);
+      if (error) console.error('Clear chat history error:', error);
+      setMessages([]);
+    } catch (err) {
+      console.error(err);
+    }
   }, []);
 
   /** Tap once to start recording, tap again to stop and turn it into text. */

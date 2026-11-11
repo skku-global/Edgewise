@@ -140,6 +140,10 @@ export function JournalSheet({
   useEffect(() => {
     if (!visible) return;
     setEntry(initialEntry);
+    // Messages belong to the previous session of this sheet, not this one.
+    setError(null);
+    setStatusMessage(null);
+    setCheckinText('');
     setPhase(
       initialEntry?.status === 'closed'
         ? 'after'
@@ -177,6 +181,11 @@ export function JournalSheet({
       setThoughts('');
       setEmotionAfter('calm');
       setGradeResult(null);
+      setCheckinMood('calm');
+      // A fresh plan has no screenshots. Without this, the previous entry's
+      // thumbnails carried over and a brand-new plan showed "2 of 5 attached
+      // (requirement met)" before a single chart had been added.
+      setShots([]);
     }
 
     loadRules().then(setRules).catch(console.error);
@@ -337,6 +346,11 @@ export function JournalSheet({
   };
 
   const handleSavePlan = async () => {
+    if (entry?.status === 'closed') {
+      // The database trigger refuses this anyway; say so before the round trip.
+      setError('This trade is closed. Its plan is locked; only the review can still be edited.');
+      return;
+    }
     if (!pair.trim()) {
       setError('Enter a pair (e.g. EURUSD) before saving.');
       return;
@@ -731,8 +745,9 @@ export function JournalSheet({
                   onPress={handleGradePlan}
                 />
                 <Button
-                  label={busy ? 'Saving…' : entry ? 'Update Plan' : 'Save Plan'}
+                  label={busy ? 'Saving…' : isClosed ? 'Plan locked' : entry ? 'Update Plan' : 'Save Plan'}
                   loading={busy}
+                  disabled={isClosed}
                   onPress={handleSavePlan}
                 />
               </View>

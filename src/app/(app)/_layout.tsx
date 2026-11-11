@@ -6,10 +6,12 @@ import { useDesignMode } from '../../design/mode';
 import { AppShell } from '../../design/shell';
 
 /**
- * Two designs, one app.
- *   dark  = the original design (bottom/top tabs, old screens in src/classic)
- *   white = the new design (hamburger shell, screens in src/design)
- * TradesProvider wraps both because the old screens read the shared trade list.
+ * Two designs, one set of screens.
+ *   dark  = native tabs / the web top bar from `components/app-tabs*`
+ *   white = the `AppShell` header with its hamburger menu
+ * Both render the same route files, which draw from `src/design`; only the
+ * frame around them changes. TradesProvider sits above both so a mode switch
+ * does not refetch and does not drop the realtime channel.
  */
 export default function AppLayout() {
   const { mode } = useDesignMode();
